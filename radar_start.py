@@ -3,7 +3,7 @@ import time
 import numpy as np
 
 # Change the configuration file name
-configFileName = '/home/pi/mm_Wave_Radar_IWR6843AOPEVM/config_file.cfg'
+configFileName = 'config_file.cfg'
 CLIport = {}
 Dataport = {}
 byteBuffer = np.zeros(2**15,dtype = 'uint8')
@@ -21,12 +21,12 @@ def serialConfig(configFileName):
     # Open the serial ports for the configuration and the data ports
     
     # Raspberry pi
-    CLIport = serial.Serial('/dev/ttyUSB0', 115200)
-    Dataport = serial.Serial('/dev/ttyUSB1', 921600)
+    #CLIport = serial.Serial('/dev/ttyUSB0', 115200)
+    #Dataport = serial.Serial('/dev/ttyUSB1', 921600)
     
     # Windows
-    #CLIport = serial.Serial('COM3', 115200)
-    #Dataport = serial.Serial('COM4', 921600)
+    CLIport = serial.Serial('COM3', 115200)
+    Dataport = serial.Serial('COM4', 921600)
 
     # Read the configuration file and send it to the board
     config = [line.rstrip('\r\n') for line in open(configFileName)]
@@ -52,7 +52,7 @@ def parseConfigFile(configFileName):
         
         # Hard code the number of antennas, change if other configuration is used
         numRxAnt = 4
-        numTxAnt = 2
+        numTxAnt = 3
         
         # Get the information about the profile configuration
         if "profileCfg" in splitWords[0]:

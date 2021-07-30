@@ -1,112 +1,7 @@
-
-import os
-os.environ["MAVLINK20"] = "1"
-
+import math
 import serial
 import time
 import numpy as np
-from apscheduler.schedulers.background import BackgroundScheduler
-from pymavlink import mavutil
-import threading
-import time
-import sys
-
-# sensor parameters
-DEPTH_RANGE_M = [0.1, 50]
-
-# Default configurations for connection to the FCU
-connection_string = '/dev/ttyS0'
-connection_baudrate = 921600
-
-obstacle_distance_msg_hz = 60
-
-start_time =  int(round(time.time() * 1000))
-current_milli_time = lambda: int(round(time.time() * 1000) - start_time)
-
-mavlink_x = []
-mavlink_y = []
-mavlink_z = []
-
-######################################################
-##  Functions - MAVLink                             ##
-######################################################
-
-def mavlink_loop(conn, callbacks):
-    '''a main routine for a thread; reads data from a mavlink connection,
-    calling callbacks based on message type received.
-    '''
-    interesting_messages = list(callbacks.keys())
-    while True:
-        # send a heartbeat msg
-        conn.mav.heartbeat_send(mavutil.mavlink.MAV_TYPE_ONBOARD_CONTROLLER,
-                                mavutil.mavlink.MAV_AUTOPILOT_GENERIC,
-                                0,
-                                0,
-                                0)
-        m = conn.recv_match(type=interesting_messages, timeout=1, blocking=True)
-        if m is None:
-            continue
-        callbacks[m.get_type()](m)
-
-def send_obstacle_distance_3D_message():
-    global mavlink_x, mavlink_y, mavlink_z
-
-    current_time_ms = current_milli_time()
-
-    for i in range(len(mavlink_x)):
-        conn.mav.obstacle_distance_3d_send(
-            current_time_ms,    # us Timestamp (UNIX time or time since system boot)
-            0,
-            mavutil.mavlink.MAV_FRAME_BODY_FRD,
-            65535,
-            float(mavlink_x[i]),
-            float(mavlink_y[i]),
-            float(mavlink_z[i]),
-            float(DEPTH_RANGE_M[0]),
-            float(DEPTH_RANGE_M[1])
-        )
-
-def send_msg_to_gcs(text_to_be_sent):
-    # MAV_SEVERITY: 0=EMERGENCY 1=ALERT 2=CRITICAL 3=ERROR, 4=WARNING, 5=NOTICE, 6=INFO, 7=DEBUG, 8=ENUM_END
-    text_msg = 'D4xx: ' + text_to_be_sent
-    conn.mav.statustext_send(mavutil.mavlink.MAV_SEVERITY_INFO, text_msg.encode())
-
-# Request a timesync update from the flight controller, for future work.
-# TODO: Inspect the usage of timesync_update 
-def update_timesync(ts=0, tc=0):
-    if ts == 0:
-        ts = int(round(time.time() * 1000))
-    conn.mav.timesync_send(tc, ts)
-
-
-
-
-conn = mavutil.mavlink_connection(
-    device = str(connection_string),
-    autoreconnect = True,
-    source_system = 1,
-    source_component = 93,
-    baud=connection_baudrate,
-    force_connected=True,
-)
-
-
-mavlink_callbacks = {
-}
-mavlink_thread = threading.Thread(target=mavlink_loop, args=(conn, mavlink_callbacks))
-mavlink_thread.start()
-
-# Send MAVlink messages in the background at pre-determined frequencies
-sched = BackgroundScheduler()
-
-sched.add_job(send_obstacle_distance_3D_message, 'interval', seconds = 1/obstacle_distance_msg_hz)
-send_msg_to_gcs('Sending obstacle distance messages to FCU')
-
-
-sched.start()
-
-# ----------------------RADAR CODE-----------------------------
-
 
 # Change the configuration file name
 configFileName = 'config_file.cfg'
@@ -205,18 +100,34 @@ def readAndParseData68xx(Dataport, configParameters):
     # Constants
     OBJ_STRUCT_SIZE_BYTES = 12;
     BYTE_VEC_ACC_MAX_SIZE = 2**15;
+    FFT_SIZE = 64;
+
     MMWDEMO_UART_MSG_DETECTED_POINTS = 1;
     MMWDEMO_UART_MSG_RANGE_PROFILE   = 2;
+    MMWDEMO_UART_MSG_NOISE_PROFILE   = 3;
+    MMWDEMO_UART_MSG_AZIMUT_STATIC_HEAT_MAP = 4;
+    MMWDEMO_UART_MSG_RANGE_DOPPLER_HEAT_MAP = 5;
+    MMWDEMO_UART_MSG_STATS = 6;
+    MMWDEMO_UART_MSG_DETECTED_POINTS_SIDE_INFO = 7;
+    MMWDEMO_UART_MSG_AZIMUT_ELEVATION_STATIC_HEAT_MAP = 8;
+    MMWDEMO_UART_MSG_TEMPERATURE_STATS = 9;
+    MMWDEMO_UART_MSG_MAX = 10;
+
     maxBufferSize = 2**15;
     tlvHeaderLengthInBytes = 8;
     pointLengthInBytes = 16;
     magicWord = [2, 1, 4, 3, 6, 5, 8, 7]
+
+    PI = 3.14159265
     
     # Initialize variables
     magicOK = 0 # Checks if magic number has been read
     dataOK = 0 # Checks if the data has been read correctly
     frameNumber = 0
     detObj = {}
+    detObj_sideInfo = {}
+    rangeProfile = []
+    noiseProfile = []
     
     readBuffer = Dataport.read(Dataport.in_waiting)
     byteVec = np.frombuffer(readBuffer, dtype = 'uint8')
@@ -272,6 +183,7 @@ def readAndParseData68xx(Dataport, configParameters):
         idX = 0
         
         # Read the header
+        # mmwave_sdk_03_05_00_04/packages/ti/demo/xwr64xx/mmw/docs/doxygen/html/struct_mmw_demo__output__message__header__t.html
         magicNumber = byteBuffer[idX:idX+8]
         idX += 8
         version = format(np.matmul(byteBuffer[idX:idX+4],word),'x')
@@ -307,10 +219,19 @@ def readAndParseData68xx(Dataport, configParameters):
             if tlv_type == MMWDEMO_UART_MSG_DETECTED_POINTS:
 
                 # Initialize the arrays
+                # mmwave_sdk_03_05_00_04/packages/ti/datapath/dpu/rangeproc/docs/doxygen/html/struct_d_p_i_f___point_cloud_cartesian__t.html
                 x = np.zeros(numDetectedObj,dtype=np.float32)
                 y = np.zeros(numDetectedObj,dtype=np.float32)
                 z = np.zeros(numDetectedObj,dtype=np.float32)
                 velocity = np.zeros(numDetectedObj,dtype=np.float32)
+                # Doppler velocity estimate in m/s. 
+                # Positive velocity means target is moving away from the sensor and 
+                # negative velocity means target is moving towards the sensor.
+
+                # arrays for calculated values
+                objectRange = np.zeros(numDetectedObj,dtype=np.float32)
+                objectAzimuth = np.zeros(numDetectedObj,dtype=np.float32)
+                objectElevation = np.zeros(numDetectedObj,dtype=np.float32)
                 
                 for objectNum in range(numDetectedObj):
                     
@@ -323,10 +244,138 @@ def readAndParseData68xx(Dataport, configParameters):
                     idX += 4
                     velocity[objectNum] = byteBuffer[idX:idX + 4].view(dtype=np.float32)
                     idX += 4
+
+                    # Calculate range, azimuth and elevation
+                    # range of detected object
+                    objectRange[objectNum] = math.sqrt(
+                        x[objectNum] * x[objectNum] + 
+                        y[objectNum] * y[objectNum] + 
+                        z[objectNum] * z[objectNum]
+                    )
+
+                    # azimuth of detected object
+                    if y[objectNum] == 0: # y can never be negative as that would mean detected object is behind the sensor
+                        if x[objectNum] >= 0:
+                            objectAzimuth[objectNum] = 90
+                        else:
+                            objectAzimuth[objectNum] = -90 
+                    else:
+                        objectAzimuth[objectNum] = math.atan(x[objectNum] / y[objectNum]) * 180 / PI
+
+                    # elevation of detected object
+                    if x[objectNum] == 0 and y[objectNum] == 0:
+                        if z[objectNum] >= 0:
+                            objectElevation[objectNum] = 90
+                        else: 
+                            objectElevation[objectNum] = -90
+                    else:
+                        objectElevation[objectNum] = math.atan(z[objectNum] / math.sqrt((x[objectNum] * x[objectNum])+(y[objectNum] * y[objectNum]))) * 180 / PI
+
+                    
                 
                 # Store the data in the detObj dictionary
-                detObj = {"numObj": numDetectedObj, "x": x, "y": y, "z": z, "velocity":velocity}
+                detObj = {
+                    "numObj": numDetectedObj, 
+                    "x": x, "y": y, "z": z, 
+                    "range": objectRange, "azimuth": objectAzimuth, "elevation": objectElevation, 
+                    "velocity":velocity}
                 dataOK = 1
+
+            """# Check the header of the TLV message
+            tlv_type = np.matmul(byteBuffer[idX:idX+4],word)
+            idX += 4
+            tlv_length = np.matmul(byteBuffer[idX:idX+4],word)
+            idX += 4"""
+
+            if tlv_type == MMWDEMO_UART_MSG_DETECTED_POINTS_SIDE_INFO:
+
+                # Initialize the arrays
+                # mmwave_sdk_03_05_00_04/packages/ti/datapath/dpu/rangeproc/docs/doxygen/html/struct_d_p_i_f___point_cloud_side_info__t.html
+                # Point cloud side information such as SNR and noise level.
+                # The structure describes the field for a point cloud in XYZ format
+                
+                snr = np.zeros(numDetectedObj,dtype=np.int16)
+                # snr - CFAR cell to side noise ratio in dB expressed in 0.1 steps of dB
+
+                noise = np.zeros(numDetectedObj,dtype=np.int16)
+                # y - CFAR noise level of the side of the detected cell in dB expressed in 0.1 steps of dB
+
+                for objectNum in range(numDetectedObj):
+
+                    # Read the data for each object
+                    snr[objectNum] = byteBuffer[idX:idX + 2].view(dtype=np.int16) * 0.1 # dB step
+                    idX += 2
+                    noise[objectNum] = byteBuffer[idX:idX + 2].view(dtype=np.int16) * 0.1 # dB step
+                    idX += 2
+
+                # Store side information of detected objects
+                detObj_sideInfo = {
+                    "snr": snr, "noise": noise
+                }
+
+            
+            """# Check the header of the TLV message
+            tlv_type = np.matmul(byteBuffer[idX:idX+4],word)
+            idX += 4
+            tlv_length = np.matmul(byteBuffer[idX:idX+4],word)
+            idX += 4"""
+
+            if tlv_type == MMWDEMO_UART_MSG_RANGE_PROFILE:
+
+                # Initialize the arrays
+                power = np.zeros(FFT_SIZE,dtype=np.uint16)
+
+                for sample in range(FFT_SIZE):
+
+                    power[sample] = byteBuffer[idX:idX + 2].view(dtype=np.uint16)
+
+                    # Convert uint16 from Q7.9 format to floating point
+                    integer_bits = '{0:b}'.format(power[sample])[:7]
+                    integer = int(integer_bits, 2)
+
+                    fraction_bits = '{0:b}'.format(power[sample])[7:]
+                    fraction = 0.0
+
+                    for bit in range(len(fraction_bits)):
+                        multiplier = int(fraction_bits[bit])
+                        exponent = -bit - 1
+                        fraction += multiplier * pow(2, exponent)
+
+                    rangeProfile.append(integer + fraction) # in dB
+                    idX += 2
+
+            """
+            # Check the header of the TLV message
+            tlv_type = np.matmul(byteBuffer[idX:idX+4],word)
+            idX += 4
+            tlv_length = np.matmul(byteBuffer[idX:idX+4],word)
+            idX += 4"""
+
+            if tlv_type == MMWDEMO_UART_MSG_NOISE_PROFILE:
+
+                # Initialize the arrays
+                noise = np.zeros(FFT_SIZE,dtype=np.uint16)
+
+                for sample in range(FFT_SIZE):
+
+                    noise[sample] = byteBuffer[idX:idX + 2].view(dtype=np.uint16)
+
+                    # Convert uint16 from Q7.9 format to floating point
+                    integer_bits = '{0:b}'.format(noise[sample])[:7]
+                    integer = int(integer_bits, 2)
+
+                    fraction_bits = '{0:b}'.format(noise[sample])[7:]
+                    fraction = 0.0
+
+                    for bit in range(len(fraction_bits)):
+                        multiplier = int(fraction_bits[bit])
+                        exponent = -bit - 1
+                        fraction += multiplier * pow(2, exponent)
+
+                    noiseProfile.append(integer + fraction) # in dB
+                    idX += 2
+
+
                 
  
         # Remove already processed data
@@ -342,24 +391,28 @@ def readAndParseData68xx(Dataport, configParameters):
             if byteBufferLength < 0:
                 byteBufferLength = 0         
 
-    return dataOK, frameNumber, detObj
+    return dataOK, frameNumber, detObj, detObj_sideInfo, rangeProfile, noiseProfile
 # ------------------------------------------------------------------
 
 # Funtion to update the data and display in the plot
 def update():
-    global mavlink_x, mavlink_y, mavlink_z
+     
     dataOk = 0
     global detObj
-   
+    #global detObj_sideInfo
+    x = []
+    y = []
       
     # Read and parse the received data
-    dataOk, frameNumber, detObj = readAndParseData68xx(Dataport, configParameters)
+    dataOk, frameNumber, detObj, detObj_sideInfo, rangeProfile, noiseProfile = readAndParseData68xx(Dataport, configParameters)
     
     if dataOk and len(detObj["x"])>0:
         print(detObj)
-        mavlink_y = -detObj["x"]
-        mavlink_x = detObj["y"]
-        mavlink_z = detObj["z"]
+        print(detObj_sideInfo)
+        print(rangeProfile)
+        print(noiseProfile)
+        x = -detObj["x"]
+        y = detObj["y"]
         
           
     return dataOk
@@ -380,6 +433,7 @@ currentIndex = 0
 while True:
     try:
         # Update the data and check if the data is okay
+
         dataOk = update()
         
         if dataOk:
@@ -387,13 +441,14 @@ while True:
             frameData[currentIndex] = detObj
             currentIndex += 1
         
-        time.sleep(0.05) # Sampling frequency of 30 Hz
+        time.sleep(0.05) # Sampling frequency of 20 Hz
         
     # Stop the program and close everything if Ctrl + c is pressed
     except KeyboardInterrupt:
         CLIport.write(('sensorStop\n').encode())
         CLIport.close()
         Dataport.close()
+        #win.close()
         break
         
     

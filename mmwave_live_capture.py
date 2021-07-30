@@ -1,9 +1,10 @@
+import math
 import serial
 import time
 import numpy as np
 
 # Change the configuration file name
-configFileName = '/home/pi/mm_Wave_Radar_IWR6843AOPEVM/config_file.cfg'
+configFileName = 'config_file.cfg'
 CLIport = {}
 Dataport = {}
 byteBuffer = np.zeros(2**15,dtype = 'uint8')
@@ -21,12 +22,12 @@ def serialConfig(configFileName):
     # Open the serial ports for the configuration and the data ports
     
     # Raspberry pi
-    CLIport = serial.Serial('/dev/ttyUSB0', 115200)
-    Dataport = serial.Serial('/dev/ttyUSB1', 921600)
+    #CLIport = serial.Serial('/dev/ttyUSB0', 115200)
+    #Dataport = serial.Serial('/dev/ttyUSB1', 921600)
     
     # Windows
-    #CLIport = serial.Serial('COM3', 115200)
-    #Dataport = serial.Serial('COM4', 921600)
+    CLIport = serial.Serial('COM3', 115200)
+    Dataport = serial.Serial('COM4', 921600)
 
     # Read the configuration file and send it to the board
     config = [line.rstrip('\r\n') for line in open(configFileName)]
@@ -105,6 +106,8 @@ def readAndParseData68xx(Dataport, configParameters):
     tlvHeaderLengthInBytes = 8;
     pointLengthInBytes = 16;
     magicWord = [2, 1, 4, 3, 6, 5, 8, 7]
+
+    PI = 3.14159265
     
     # Initialize variables
     magicOK = 0 # Checks if magic number has been read
@@ -166,6 +169,7 @@ def readAndParseData68xx(Dataport, configParameters):
         idX = 0
         
         # Read the header
+        # mmwave_sdk_03_05_00_04/packages/ti/demo/xwr64xx/mmw/docs/doxygen/html/struct_mmw_demo__output__message__header__t.html
         magicNumber = byteBuffer[idX:idX+8]
         idX += 8
         version = format(np.matmul(byteBuffer[idX:idX+4],word),'x')
@@ -201,10 +205,16 @@ def readAndParseData68xx(Dataport, configParameters):
             if tlv_type == MMWDEMO_UART_MSG_DETECTED_POINTS:
 
                 # Initialize the arrays
+                # mmwave_sdk_03_05_00_04/packages/ti/datapath/dpu/rangeproc/docs/doxygen/html/struct_d_p_i_f___point_cloud_cartesian__t.html
                 x = np.zeros(numDetectedObj,dtype=np.float32)
                 y = np.zeros(numDetectedObj,dtype=np.float32)
                 z = np.zeros(numDetectedObj,dtype=np.float32)
                 velocity = np.zeros(numDetectedObj,dtype=np.float32)
+
+                # arrays for calculated values
+                objectRange = np.zeros(numDetectedObj,dtype=np.float32)
+                objectAzimuth = np.zeros(numDetectedObj,dtype=np.float32)
+                objectElevation = np.zeros(numDetectedObj,dtype=np.float32)
                 
                 for objectNum in range(numDetectedObj):
                     
@@ -217,9 +227,41 @@ def readAndParseData68xx(Dataport, configParameters):
                     idX += 4
                     velocity[objectNum] = byteBuffer[idX:idX + 4].view(dtype=np.float32)
                     idX += 4
+
+                    # Calculate range, azimuth and elevation
+                    # range of detected object
+                    objectRange[objectNum] = math.sqrt(
+                        x[objectNum] * x[objectNum] + 
+                        y[objectNum] * y[objectNum] + 
+                        z[objectNum] * z[objectNum]
+                    )
+
+                    # azimuth of detected object
+                    if y[objectNum] == 0:
+                        if x[objectNum] >= 0:
+                            objectAzimuth[objectNum] = 90
+                        else:
+                            objectAzimuth[objectNum] = -90 
+                    else:
+                        objectAzimuth[objectNum] = math.atan(x[objectNum] / y[objectNum]) * 180 / PI
+
+                    # elevation of detected object
+                    if x[objectNum] == 0 and y[objectNum] == 0:
+                        if z[objectNum] >= 0:
+                            objectElevation[objectNum] = 90
+                        else: 
+                            objectElevation[objectNum] = -90
+                    else:
+                        objectElevation[objectNum] = math.atan(z[objectNum] / math.sqrt((x[objectNum] * x[objectNum])+(y[objectNum] * y[objectNum]))) * 180 / PI
+
+                    
                 
                 # Store the data in the detObj dictionary
-                detObj = {"numObj": numDetectedObj, "x": x, "y": y, "z": z, "velocity":velocity}
+                detObj = {
+                    "numObj": numDetectedObj, 
+                    "x": x, "y": y, "z": z, 
+                    "range": objectRange, "azimuth": objectAzimuth, "elevation": objectElevation, 
+                    "velocity":velocity}
                 dataOK = 1
                 
  
@@ -281,14 +323,14 @@ while True:
             frameData[currentIndex] = detObj
             currentIndex += 1
         
-        time.sleep(0.05) # Sampling frequency of 30 Hz
+        time.sleep(0.05) # Sampling frequency of 20 Hz
         
     # Stop the program and close everything if Ctrl + c is pressed
     except KeyboardInterrupt:
         CLIport.write(('sensorStop\n').encode())
         CLIport.close()
         Dataport.close()
-        win.close()
+        #win.close()
         break
         
     
