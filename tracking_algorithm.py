@@ -24,6 +24,11 @@ VERBOSE_MATRIX = 4;     # previous level plus all intermediate computation resul
 VERBOSE_MAXIMUM = 5;    # maximum amount of details are reported
 
 
+# Track state constants
+TRACK_STATE_FREE = 0;
+TRACK_STATE_INIT = 1;
+TRACK_STATE_DETECTION = 2;
+TRACK_STATE_ACTIVE = 3;
 
 # Default values for configParams
 # No presence detection
@@ -122,7 +127,7 @@ pinit6x6 = [
 
 
 
-def gtrack_create(moduleConfig):
+def gtrack_create(moduleConfig, objectType, activeModules):
     """Creates a module instance with parameter values that are constant for each of the tracked units within the module.
     These parameters are:
         a) Default parameters for gating, statem velocity unrolling, allocation and presence.
@@ -130,10 +135,15 @@ def gtrack_create(moduleConfig):
         c) Initialize Process Noise Matrix Q and State transition Matrix F.
 
     Args:
-        configParams (dict): Contains the parameters that are exposed by gtrack algorithm.
-                             The configuration does not need to persist.
-                             Advanced configuration structure can be set to NULL to use the default one.
-                             Any field within Advanced configuration can also be set to NULL to use the default values for the field.
+        configParams (dict):    Contains the parameters that are exposed by gtrack algorithm.
+                                The configuration does not need to persist.
+                                Advanced configuration structure can be set to NULL to use the default one.
+                                Any field within Advanced configuration can also be set to NULL to use the default values for the field.
+        
+        objectType (str):       Name of the type of object that the instance will be tracking
+
+        activeModules (dict):   List of active modules that stores the instance after initialization
+
     """
 
     # Module instance initialization
@@ -210,7 +220,7 @@ def gtrack_create(moduleConfig):
 
     
     # Configure elevation angle adjustment and check if sensor is mounted on the ceiling
-    thetaRot = moduleInstance['params']['sceneryParams']['sensorOrientation'][0]
+    thetaRot = moduleInstance['params']['sceneryParams']['sensorOrientation'][1]
 
     if (math.fabs(thetaRot - 90.0) < 20.5):
         moduleInstance['isCeilingMounted'] = True
@@ -368,7 +378,7 @@ def gtrack_create(moduleConfig):
             moduleInstance['uidElem'][uid] = uid
             moduleInstance['freeList'][uid] = uid
 
-            moduleInstance['params'][f'{uid}'] = uid
+            moduleInstance['params']['uid'] = uid
             moduleInstance['hTrack'][uid] = gtrack_unitCreate(moduleInstance['params'])
     
         except Exception:
@@ -376,18 +386,171 @@ def gtrack_create(moduleConfig):
             raise Exception(f'An error has occured while creating a unit instance with Unid Identifier UID: {uid}')
 
 
-    pass
+    activeModules[f'{objectType}'] = moduleInstance
 
-def gtrack_unitCreate(trackingParams):
 
-    pass
+def gtrack_unitCreate(trackingParams, activeUnits):
+
+    # Unit instance initialization
+    # docs/doxygen3D/html/struct_gtrack_unit_instance.html
+    unitInstance = {
+        'uid': None,                            # Tracking Unit identifier
+        'tid': None,                            # Target identifier
+        'heartBeatCount': {},                   # TimeStamp
+        'allocationTime': None,                 # Allocation time
+        'allocationRange': None,                # Allocation range
+        'allocationVelocity': None,             # Allocation radial velocity
+        'estNumOfPoints': None,                   # Estimated number of points
+        'state': [],                            # Current state
+        'confidenceLevel': [],                  # Target confidence levec
+        'confidenceLevelThreshold': [],         # Confidence Level threshold to determine sleep condition limit
+        'isAssociationHeightIgnore': [],        # Indicates whether to ignore height dimension during 3D association or not (used in 3D ceiling mount configuration)
+        'isAssociationGhostMarking': [],        # Indicates whether we mark ghosts behind the target (used in 2D case)
+        'isEnablePointNumberEstimation':  [],   # Indicates whether we estimate expected number of points
+        'isTargetStatic': [],                   # Indicates whether target is currently static
+        'skipPrediction': [],                   # Skip Prediction (when not enough reliable reflection points)
+        'skipProcessNoiseEst': [],              # Skip Process Noise estimation (when not enough reliable reflection points)
+        'isSnrWeighting': [],                   # Indicates whether SNR-based weighting or simple averaging is used to compute centroid center
+        'stateVectorType': None,                # Requested State Vector type
+        'currentStateVectorType': None,         # Current State Vector type
+        'stateVectorDimNum': None,              # Number of Dimensions in State Vector, ex. 2 for constant velocity, 3 for constnat acceleration
+        'stateVectorDimLength': None,           # Length of each dimensions in State Vector, ex. 2 for XY, 3 for XYZ
+        'stateVectorLength': None,              # Length of State Vector
+        'measurementVectorLength': None,        # Length of Measurement Vector
+        'verbose': None,                        # Veboseness Mask
+        'params': {},                           # Tracking Unit Parameters
+        'velocityHandling': None,               # Current velocity handling State
+        'initialRadialVelocity': None,          # Expected target radial velocity at the moment of detection, m/s
+        'maxRadialVelocity': None,              # Absolute value of maximum radial velocity measure by the sensor, m/s
+        'radialVelocityResolution': None,       # Radial velocity resolution of the sensor, m/s
+        'rangeRate': None,                      # Current Range Rate value
+        'minStaticVelocityOne': None,           # minimal velocity threshold to transition to static state (No points available)
+        'minStaticVelocityTwo': None,           # minimal velocity threshold to transition to static state (Static points only)
+        'estSpreadAlpha': None,                 # filter coefficient for spread estimation
+        'numAssosiatedPoints': None,            # Number of assocuated dynamic points
+        'detect2activeCount': None,             # Detection state count to active
+        'detect2freeCount': None,               # Detection state count to free
+        'active2freeCount': None,               # Active state count to free
+        'sleep2freeCount': None,                # Active state static condition count to free
+        'outside2freeCount': None,              # Outside boundary box count to free
+        'maxAcceleration': [0.0, 0.0, 0.0],     # Configured target maximum acceleration
+        'dt': None,                             # Configured Frame rate
+        'F': None,                              # Pointer to current Transition matrix
+        'Q': None,                              # Pointer to current Process Noise matrix
+        'S_hat': None,                          # State matrix, estimated
+        'S_apriori_hat': None,                  # State matrix, predicted
+        'P_hat': None,                          # Process matrix, estimated
+        'P_apriori_hat': None,                  # Process matrix, predicted
+        'H_s': None,                            # Expected Measurement matrix
+        'uCenter': None,                        # Calculated measurement centroid
+        'uPos': None,                           # Calculated measurement centroid
+        'H_limits': None,                       # Limits for associated measurments
+        'estSpread': None,                      # Estimated spread of the measurements
+        'estDim': None,                         # Estimated physical dimensions of the target
+        'gD': None,                             # Group Dispersion matrix
+        'gC': None,                             # Group Member Covariance matrix (between a member in measurment group and group centroid)
+        'gC_inv': None,                         # Inverse of Group Covariance matrix
+        'eC': None,                             # DEBUG, previous tick ec to report
+        'gC_det': None,                         # determinant of Group Covariance matrix
+        'G': None,                              # Gain used in association function
+    }
+
+    # Setting parameters
+    unitInstance['params']['gatingParams'] = trackingParams['gatingParams']
+    unitInstance['params']['stateParams'] = trackingParams['stateParams']
+    unitInstance['params']['allocationParams'] = trackingParams['allocationParams']
+    unitInstance['params']['unrollingParams'] = trackingParams['unrollingParams']
+    unitInstance['params']['sceneryParams'] = trackingParams['sceneryParams']
+    unitInstance['params']['transformParams'] = trackingParams['transformParams']
+    
+    unitInstance['maxAcceleration'] = trackingParams['maxAcceleration']
+    
+    unitInstance['uid'] = trackingParams['uid']
+    unitInstance['isTargetStatic'] = False
+    unitInstance['maxRadialVelocity'] = trackingParams['maxRadialVelocity']
+    unitInstance['initialRadialVelocity'] = trackingParams['initialRadialVelocity']
+    unitInstance['radialVelocityResolution'] = trackingParams['radialVelocityResolution']
+    unitInstance['verbose'] = trackingParams['verbose']
+
+    unitInstance['params']['F'] = trackingParams['F']
+    unitInstance['params']['Q'] = trackingParams['Q']
+
+    stateVectorType = trackingParams['stateVectorType']
+
+    if stateVectorType == STATE_VECTORS_2DA:
+        unitInstance['stateVectorType'] = STATE_VECTORS_2DA
+        unitInstance['stateVectorDimNum'] = 2
+        unitInstance['stateVectorDimLength'] = 3
+        unitInstance['stateVectorLength'] = 6
+        unitInstance['measurementVectorLength'] = 3
+
+        unitInstance['minStaticVelocityOne'] = 0.1
+        unitInstance['minStaticVelocityTwo'] = 0.1
+        unitInstance['isAssociationGhostMarking'] = True
+        unitInstance['isAssociationHeightIgnore'] = False
+
+        unitInstance['isEnablePointNumberEstimation'] = True
+        unitInstance['isSnrWeighting'] = True
+        unitInstance['estNumOfPoints'] = unitInstance['params']['allocationParams']['pointsThre']
+        unitInstance['estSpreadAlpha'] = 0.05
+        unitInstance['confidenceLevelThreshold'] = 0.7
+
+    elif stateVectorType == STATE_VECTORS_3DA:
+        unitInstance['stateVectorType'] = STATE_VECTORS_3DA
+        unitInstance['stateVectorDimNum'] = 3
+        unitInstance['stateVectorDimLength'] = 3
+        unitInstance['stateVectorLength'] = 9
+        unitInstance['measurementVectorLength'] = 4
+
+        unitInstance['minStaticVelocityOne'] = 0.5
+        unitInstance['minStaticVelocityTwo'] = 0.5
+        unitInstance['isAssociationGhostMarking'] = False
+        unitInstance['estSpreadAlpha'] = 0.01
+
+        elevTilt = unitInstance['params']['sceneryParams']['sensorOrientation'][1]
+
+        if (math.fabs(90.0 - elevTilt) < 20.5):
+            # Sensor is ceiling mounted
+            unitInstance['isAssociationHeightIgnore'] = True
+            unitInstance['isEnablePointNumberEstimation'] = False
+            unitInstance['isSnrWeighting'] = False
+            unitInstance['estNumOfPoints'] = 100.0
+            unitInstance['confidenceLevelThreshold'] = 0.3
+
+        else:
+            # Sensor is wall mounted
+            unitInstance['isAssociationHeightIgnore'] = False
+            unitInstance['isEnablePointNumberEstimation'] = True
+            unitInstance['isSnrWeighting'] = True
+            unitInstance['estNumOfPoints'] = unitInstance['params']['allocationParams']['pointsThre']
+            unitInstance['confidenceLevelThreshold'] = 0.5
+
+    else:
+        # exit and delete unit instance
+        # gtrack_free(unitInstance)
+        raise Exception('Invalid argument or unsupported state vector option.')
+
+
+    unitInstance['dt'] = trackingParams['deltaT']
+    unitInstance['state'] = TRACK_STATE_FREE
+
+    activeUnits.append(unitInstance)
+
+
 
 def gtrack_unitStart():
 
     pass
 
-def gtrack_delete(instance):
-    pass
+def gtrack_delete(objectType, activeModules):
+    """A function that removes module instance from the list of active module instances
+
+    Args:
+        objectType (str):     Name of module instance
+        activeModules (dict): Dictionary of actice modules
+    """
+
+    activeModules.pop(objectType)
 
 
 def gtrack_step(pointCloud, targetList):
