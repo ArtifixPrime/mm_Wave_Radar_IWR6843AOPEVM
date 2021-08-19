@@ -313,23 +313,18 @@ def readAndParseData68xx(Dataport, configParameters):
                     "snr": snr, "noise": noise
                 }
 
-            
-            """# Check the header of the TLV message
-            tlv_type = np.matmul(byteBuffer[idX:idX+4],word)
-            idX += 4
-            tlv_length = np.matmul(byteBuffer[idX:idX+4],word)
-            idX += 4"""
-
+            # If range profile is enabled in guiMonitor, TLV type 2 package will be added to the UART output packet
             if tlv_type == MMWDEMO_UART_MSG_RANGE_PROFILE:
 
-                # Initialize the arrays
+                # Initialize the array for raw data
                 power = np.zeros(FFT_SIZE,dtype=np.uint16)
 
                 for sample in range(FFT_SIZE):
 
                     power[sample] = byteBuffer[idX:idX + 2].view(dtype=np.uint16)
 
-                    # Convert uint16 from Q7.9 format to floating point
+                    # Convert uint16 from Q7.9 format (Q9 for short) to floating point
+                    # First 7 bits in uint16 represent the whole (integer) part of a single sample
                     integer_bits = '{0:b}'.format(power[sample])[:7]
                     integer = int(integer_bits, 2)
 
@@ -344,16 +339,10 @@ def readAndParseData68xx(Dataport, configParameters):
                     rangeProfile.append(integer + fraction) # in dB
                     idX += 2
 
-            """
-            # Check the header of the TLV message
-            tlv_type = np.matmul(byteBuffer[idX:idX+4],word)
-            idX += 4
-            tlv_length = np.matmul(byteBuffer[idX:idX+4],word)
-            idX += 4"""
-
+            # If noise profile is enabled in guiMonitor, TLV type 3 package will be added to the UART output packet 
             if tlv_type == MMWDEMO_UART_MSG_NOISE_PROFILE:
 
-                # Initialize the arrays
+                # Initialize the array for raw data
                 noise = np.zeros(FFT_SIZE,dtype=np.uint16)
 
                 for sample in range(FFT_SIZE):

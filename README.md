@@ -14,3 +14,6 @@ mmwave_to_mavlink.py parses the data to a flight controller on mavlink for use o
 
 numpy, pyserial, apscheduler and pymavlink are depencies needed to run the last python script. Detailed decription on how to install and run python script will be uploaded later by me.
 
+
+Gtrack package is a rewrite of Texas instruments' GTRACK algorithm from mmWave SDK version 3.5.0.4. It is not supported by Texas instruments or any of it's affiliates.  
+Algorithm is currently not yet implemented for 2D space object tracking.
