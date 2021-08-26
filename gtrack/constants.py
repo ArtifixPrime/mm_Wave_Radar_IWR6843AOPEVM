@@ -1,7 +1,5 @@
 import numpy as np
-import math
-
-from numpy.core.fromnumeric import diagonal
+import sys
 
 
 # State vector constants
@@ -51,45 +49,46 @@ GTRACK_ID_POINT_BEHIND_THE_WALL   = 254    # Point is not associated, is behind 
 GTRACK_ID_POINT_NOT_ASSOCIATED    = 255    # Point is not associated, noise
 
 # Benchmarking results (indexes for list which holds benchmarking results)
-GTRACK_BENCHMARK_SETUP            = 0      # Cycle count at step setup
-GTRACK_BENCHMARK_PREDICT          = 1      # Cycle count after predict function
-GTRACK_BENCHMARK_ASSOCIATE        = 2      # Cycle count after associate function
-GTRACK_BENCHMARK_ALLOCATE         = 3      # Cycle count after allocate function
-GTRACK_BENCHMARK_UPDATE           = 4      # Cycle count after update function
-GTRACK_BENCHMARK_PRESENCE         = 5      # Cycle count after presence detection function
-GTRACK_BENCHMARK_REPORT           = 6      # Cycle count after report function
-
+GTRACK_BENCHMARK_SETUP            = 0      # Time at step setup (ms)
+GTRACK_BENCHMARK_PREDICT          = 1      # Time after predict function (ms)
+GTRACK_BENCHMARK_ASSOCIATE        = 2      # Time after associate function (ms)
+GTRACK_BENCHMARK_ALLOCATE         = 3      # Time after allocate function (ms)
+GTRACK_BENCHMARK_UPDATE           = 4      # Time after update function (ms)
+GTRACK_BENCHMARK_PRESENCE         = 5      # Time after presence detection function (ms)
+GTRACK_BENCHMARK_REPORT           = 6      # Time after report function (ms)
+GTRACK_BENCHMARK_SIZE             = 7      # Size of benchmarking array
 
 # Floats
-DBL_DECIMAL_DIG = 17                       # num of decimal digits of rounding precision
-DBL_DIG         = 15                       # num of decimal digits of precision
-DBL_EPSILON     = 2.2204460492503131e-016  # smallest such that 1.0+DBL_EPSILON != 1.0
-DBL_HAS_SUBNORM = 1                        # type does support subnormal numbers
-DBL_MANT_DIG    = 53                       # num of bits in mantissa
-DBL_MAX         = 1.7976931348623158e+308  # max value
-DBL_MAX_10_EXP  = 308                      # max decimal exponent
-DBL_MAX_EXP     = 1024                     # max binary exponent
-DBL_MIN         = 2.2250738585072014e-308  # min positive value
-DBL_MIN_10_EXP  = (-307)                   # min decimal exponent
-DBL_MIN_EXP     = (-1021)                  # min binary exponent
-_DBL_RADIX      = 2                        # exponent radix
-DBL_TRUE_MIN    = 4.9406564584124654e-324  # min positive value
+DBL_DECIMAL_DIG = 17                        # num of decimal digits of rounding precision
+DBL_DIG         = np.finfo(float).precision # num of decimal digits of precision
+DBL_EPSILON     = np.finfo(float).eps       # smallest such that 1.0+DBL_EPSILON != 1.0
+DBL_HAS_SUBNORM = 1                         # type does support subnormal numbers
+DBL_MANT_DIG    = np.finfo(float).nmant     # num of bits in mantissa
+DBL_MAX         = np.finfo(float).max       # max value
+DBL_MAX_10_EXP  = sys.float_info.max_10_exp # max decimal exponent
+DBL_MAX_EXP     = np.finfo(float).maxexp    # max binary exponent
+DBL_MIN         = np.finfo(float).tiny      # min positive value
+DBL_MIN_10_EXP  = sys.float_info.min_10_exp # min decimal exponent
+DBL_MIN_EXP     = np.finfo(float).minexp    # min binary exponent
+_DBL_RADIX      = sys.float_info.radix      # exponent radix
+DBL_TRUE_MIN    = np.nextafter(float(0),    # min positive value
+                               float(1))   
 
-FLT_DECIMAL_DIG = 9                        # num of decimal digits of rounding precision
-FLT_DIG         = 6                        # num of decimal digits of precision
-FLT_EPSILON     = 1.192092896e-07          # smallest such that 1.0+FLT_EPSILON != 1.0
-FLT_HAS_SUBNORM = 1                        # type does support subnormal numbers
+FLT_DECIMAL_DIG = 9                         # num of decimal digits of rounding precision
+FLT_DIG         = DBL_DIG                   # num of decimal digits of precision
+FLT_EPSILON     = DBL_EPSILON               # smallest such that 1.0+FLT_EPSILON != 1.0
+FLT_HAS_SUBNORM = 1                         # type does support subnormal numbers
 FLT_GUARD       = 0
-FLT_MANT_DIG    = 24                       # num of bits in mantissa
-FLT_MAX         = 3.402823466e+38          # max value
-FLT_MAX_10_EXP  = 38                       # max decimal exponent
-FLT_MAX_EXP     = 128                      # max binary exponent
-FLT_MIN         = 1.175494351e-38          # min normalized positive value
-FLT_MIN_10_EXP  = (-37)                    # min decimal exponent
-FLT_MIN_EXP     = (-125)                   # min binary exponent
+FLT_MANT_DIG    = DBL_MANT_DIG              # num of bits in mantissa
+FLT_MAX         = DBL_MAX                   # max value
+FLT_MAX_10_EXP  = DBL_MAX_10_EXP            # max decimal exponent
+FLT_MAX_EXP     = DBL_MAX_EXP               # max binary exponent
+FLT_MIN         = DBL_MIN                   # min normalized positive value
+FLT_MIN_10_EXP  = DBL_MIN_10_EXP            # min decimal exponent
+FLT_MIN_EXP     = DBL_MIN_EXP               # min binary exponent
 FLT_NORMALIZE   = 0
-FLT_RADIX       = 2                        # exponent radix
-FLT_TRUE_MIN    = 1.401298464e-45          # min positive value
+FLT_RADIX       = _DBL_RADIX                # exponent radix
+FLT_TRUE_MIN    = 1.401298464e-45           # min positive value
 
 LDBL_DIG         = DBL_DIG                 # num of decimal digits of precision
 LDBL_EPSILON     = DBL_EPSILON             # smallest such that 1.0+LDBL_EPSILON != 1.0
@@ -126,12 +125,12 @@ GTRACK_STATIC_MIN_CONIDENCE_LEVEL        =  0.8     # Minimal confidence level f
 # Schemas
 # Module instance shema
 moduleInstanceSch = {
-    'maxNumPoints': None,                   # Maximum number of measurement points per frame
-    'maxNumTracks': None,                   # Maximum number of Tracking objects
+    'maxNumPoints': 0,                      # Maximum number of measurement points per frame
+    'maxNumTracks': 0,                      # Maximum number of Tracking objects
     'params': {},                           # Tracking Unit Parameters
-    'heartBeat': None,                      # TimeStamp
-    'verbose': None,                        # Verboseness Mask
-    'isCeilingMounted': None,               # Ceiling mount option
+    'heartBeat': 0,                         # TimeStamp
+    'verbose': 0,                           # Verboseness Mask
+    'isCeilingMounted': False,              # Ceiling mount option
     'bestScore': [],                        # Array of best scores
     'bestIndex': [],                        # Array of best score authors (UIDs); UID -> Unit identifier
     'isUniqueIndex': [],                    # Bit Array of indicators whether best score author is unique
@@ -143,58 +142,58 @@ moduleInstanceSch = {
     'freeList': [],                         # List of Free Tracking Units (UIDs)
     'uidElem': [],                          # Array of UID elements
     'targetDesc': [],                       # Array of Target descriptors
-    'targetNumTotal': None,                 # Total number of tracked targets
-    'targetNumCurrent': None,               # Number of currently tracked Targets
-    'isPresenceDetectionEnabled': None,     # Presence detection enable
-    'presenceDetectionRaw': None,           # Presence detection indication based on existing targets within the ocupance box
-    'presenceDetectionInitial': None,       # The flag to indicate presence detection power up condition (no prior knowledge available)
-    'presenceDetectionCounter': None,       # The counter for transaction presence ON => presence OFF
-    'presenceDetectionOutput': None         # Presence detection output
+    'targetNumTotal': 0,                    # Total number of tracked targets
+    'targetNumCurrent': 0,                  # Number of currently tracked Targets
+    'isPresenceDetectionEnabled': False,    # Presence detection enable
+    'presenceDetectionRaw': False,          # Presence detection indication based on existing targets within the ocupance box
+    'presenceDetectionInitial': False,      # The flag to indicate presence detection power up condition (no prior knowledge available)
+    'presenceDetectionCounter': 0,          # The counter for transaction presence ON => presence OFF
+    'presenceDetectionOutput': 0            # Presence detection output
 }
 
 # Unit instance schema
 unitInstanceSch = {
-    'uid': None,                            # Tracking Unit identifier
-    'tid': None,                            # Target identifier
-    'heartBeatCount': {},                   # TimeStamp
-    'allocationTime': None,                 # Allocation time
-    'allocationRange': None,                # Allocation range
-    'allocationVelocity': None,             # Allocation radial velocity
-    'estNumOfPoints': None,                 # Estimated number of points
-    'state': None,                          # Current state
-    'confidenceLevel': None,                # Target confidence level
-    'confidenceLevelThreshold': None,       # Confidence Level threshold to determine sleep condition limit
-    'isAssociationHeightIgnore': None,      # Indicates whether to ignore height dimension during 3D association or not (used in 3D ceiling mount configuration)
-    'isAssociationGhostMarking': None,      # Indicates whether we mark ghosts behind the target (used in 2D case)
-    'isEnablePointNumberEstimation': None,  # Indicates whether we estimate expected number of points
-    'isTargetStatic': None,                 # Indicates whether target is currently static
-    'skipPrediction': None,                 # Skip Prediction (when not enough reliable reflection points)
-    'skipProcessNoiseEst': None,            # Skip Process Noise estimation (when not enough reliable reflection points)
-    'isSnrWeighting': None,                 # Indicates whether SNR-based weighting or simple averaging is used to compute centroid center
-    'stateVectorType': None,                # Requested State Vector type
-    'currentStateVectorType': None,         # Current State Vector type
-    'stateVectorDimNum': None,              # Number of Dimensions in State Vector, ex. 2 for constant velocity, 3 for constnat acceleration
-    'stateVectorDimLength': None,           # Length of each dimensions in State Vector, ex. 2 for XY, 3 for XYZ
-    'stateVectorLength': None,              # Length of State Vector
-    'measurementVectorLength': None,        # Length of Measurement Vector
-    'verbose': None,                        # Veboseness Mask
+    'uid': 0,                               # Tracking Unit identifier
+    'tid': 0,                               # Target identifier
+    'heartBeatCount': 0,                    # TimeStamp
+    'allocationTime': 0,                    # Allocation time
+    'allocationRange': 0.0,                 # Allocation range
+    'allocationVelocity': 0.0,              # Allocation radial velocity
+    'estNumOfPoints': 0.0,                  # Estimated number of points
+    'state': 0,                             # Current state
+    'confidenceLevel': 0.0,                 # Target confidence level
+    'confidenceLevelThreshold': 0.0,        # Confidence Level threshold to determine sleep condition limit
+    'isAssociationHeightIgnore': False,     # Indicates whether to ignore height dimension during 3D association or not (used in 3D ceiling mount configuration)
+    'isAssociationGhostMarking': False,     # Indicates whether we mark ghosts behind the target (used in 2D case)
+    'isEnablePointNumberEstimation': False, # Indicates whether we estimate expected number of points
+    'isTargetStatic': False,                # Indicates whether target is currently static
+    'skipPrediction': False,                # Skip Prediction (when not enough reliable reflection points)
+    'skipProcessNoiseEst': False,           # Skip Process Noise estimation (when not enough reliable reflection points)
+    'isSnrWeighting': False,                # Indicates whether SNR-based weighting or simple averaging is used to compute centroid center
+    'stateVectorType': 0,                   # Requested State Vector type
+    'currentStateVectorType': 0,            # Current State Vector type
+    'stateVectorDimNum': 0,                 # Number of Dimensions in State Vector, ex. 2 for constant velocity, 3 for constnat acceleration
+    'stateVectorDimLength': 0,              # Length of each dimensions in State Vector, ex. 2 for XY, 3 for XYZ
+    'stateVectorLength': 0,                 # Length of State Vector
+    'measurementVectorLength': 0,           # Length of Measurement Vector
+    'verbose': 0,                           # Veboseness Mask
     'params': {},                           # Tracking Unit Parameters
-    'velocityHandling': None,               # Current velocity handling State
-    'initialRadialVelocity': None,          # Expected target radial velocity at the moment of detection, m/s
-    'maxRadialVelocity': None,              # Absolute value of maximum radial velocity measure by the sensor, m/s
-    'radialVelocityResolution': None,       # Radial velocity resolution of the sensor, m/s
-    'rangeRate': None,                      # Current Range Rate value
-    'minStaticVelocityOne': None,           # minimal velocity threshold to transition to static state (No points available)
-    'minStaticVelocityTwo': None,           # minimal velocity threshold to transition to static state (Static points only)
-    'estSpreadAlpha': None,                 # filter coefficient for spread estimation
-    'numAssosiatedPoints': None,            # Number of assocuated dynamic points
-    'detect2activeCount': None,             # Detection state count to active
-    'detect2freeCount': None,               # Detection state count to free
-    'active2freeCount': None,               # Active state count to free
-    'sleep2freeCount': None,                # Active state static condition count to free
-    'outside2freeCount': None,              # Outside boundary box count to free
+    'velocityHandling': 0,                  # Current velocity handling State
+    'initialRadialVelocity': 0.0,           # Expected target radial velocity at the moment of detection, m/s
+    'maxRadialVelocity': 0.0,               # Absolute value of maximum radial velocity measure by the sensor, m/s
+    'radialVelocityResolution': 0.0,        # Radial velocity resolution of the sensor, m/s
+    'rangeRate': 0.0,                       # Current Range Rate value
+    'minStaticVelocityOne': 0.0,            # minimal velocity threshold to transition to static state (No points available)
+    'minStaticVelocityTwo': 0.0,            # minimal velocity threshold to transition to static state (Static points only)
+    'estSpreadAlpha': 0.0,                  # filter coefficient for spread estimation
+    'numAssosiatedPoints': 0,               # Number of assocuated dynamic points
+    'detect2activeCount': 0,                # Detection state count to active
+    'detect2freeCount': 0,                  # Detection state count to free
+    'active2freeCount': 0,                  # Active state count to free
+    'sleep2freeCount': 0,                   # Active state static condition count to free
+    'outside2freeCount': 0,                 # Outside boundary box count to free
     'maxAcceleration': [0.0, 0.0, 0.0],     # Configured target maximum acceleration
-    'dt': None,                             # Configured Frame rate
+    'dt': 0.0,                              # Configured Frame rate
     'F': None,                              # Pointer to current Transition matrix
     'Q': None,                              # Pointer to current Process Noise matrix
     'S_hat': None,                          # State matrix, estimated
@@ -203,17 +202,31 @@ unitInstanceSch = {
     'P_apriori_hat': None,                  # Process matrix, predicted
     'H_s': None,                            # Expected Measurement matrix
     'uCenter': [],                          # Calculated measurement centroid
-    'uPos': [None, None, None],             # Calculated measurement centroid [posX, posY, posZ] in meters
+    'uPos': [0.0, 0.0, 0.0],                # Calculated measurement centroid [posX, posY, posZ] in meters
     'H_limits': [],                         # Limits for associated measurments
     'estSpread': [],                        # Estimated spread of the measurements
-    'estDim': None,                         # Estimated physical dimensions of the target
+    'estDim': 0.0,                          # Estimated physical dimensions of the target
     'gD': None,                             # Group Dispersion matrix
     'gC': None,                             # Group Member Covariance matrix (between a member in measurment group and group centroid)
     'gC_inv': None,                         # Inverse of Group Covariance matrix
     'ec': None,                             # DEBUG, previous tick ec to report
-    'gC_det': None,                         # determinant of Group Covariance matrix
-    'G': None,                              # Gain used in association function
+    'gC_det': [0.0, 0.0],                   # Determinant of Group Covariance matrix. First value represents the determinant and the second value represents the logarithm of the determinant
+    'G': 0.0,                               # Gain used in association function
 }
+
+# Target descriptor
+tSch = {
+    'uid': None,                            # Tracking unit identifier
+    'tid': None,                            # Target identifier
+    'S':   None,                            # State vector
+    'EC':  None,                            # Group covariance matrix
+    'G':   None,                            # Gain factor
+    'dim': None,                            # Estimated target dimensions [depth, width, height, doppler]
+    'uCenter': None,                        # Measurement centroid [range, azimuth, elevation, doppler]
+    'confidenceLevel': None,                # Target confidence level
+}
+
+
 
 # Default values for configParams
 # No presence detection
@@ -236,8 +249,8 @@ defaultPresenceParams = {
     'pointsThre': 0,                        # occupancy threshold, number of points. Setting pointsThre to 0 disables presence detection
     'velocityThre': 0.0,                    # occupancy threshold, approaching velocity
     'on2offThre': 0,                        # occupancy on to off threshold
-    'numOcupancyBoxes': 0,                  # Number of occulancy boxes. Presence detection algorithm will determine whether the combined shape is occupied. Setting numOccupancyBoxes to 0 disables presence detection.
-    'boundaryBox': defaultOccupancyBoxes    # Scene occupancy boxes.
+    'numOccupancyBoxes': 0,                  # Number of occulancy boxes. Presence detection algorithm will determine whether the combined shape is occupied. Setting numOccupancyBoxes to 0 disables presence detection.
+    'occupancyBox': defaultOccupancyBoxes   # Scene occupancy boxes.
 }
 
 # No boundaries, no static boxes
@@ -254,8 +267,8 @@ for box in range(MAX_STATIC_BOXES):
     defaultStaticBoxes.append(boundaryBox)
 
 defaultSceneryParams = {
-    'sensorPosition': np.array([0.0, 0.0, 0.0]),
-    'sensorOrientation': np.array([0.0, 0.0]),
+    'sensorPosition': np.array([0.0, 0.0, 0.0], dtype=float),
+    'sensorOrientation': np.array([0.0, 0.0], dtype=float),
     'numBoundaryBoxes': 0,
     'boundaryBox': defaultBoundaryBoxes,
     'numStaticBoxes': 0,
@@ -310,6 +323,6 @@ zero3x3 = np.zeros((3,3), dtype=float)
 #    0.0, 0.0, 0.0, 0.0, 1.0, 0.0,
 #    0.0, 0.0, 0.0, 0.0, 0.0, 1.0,]
 pinitDiag = [0.0, 0.0, 0.5, 0.5, 1.0, 1.0]
-pinit6x6 = np.diag(pinitDiag, dtype=float)
+pinit6x6 = np.diag(pinitDiag)
 
 
