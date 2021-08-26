@@ -1,5 +1,6 @@
 import math
 import numpy as np
+from .constants import FLT_MAX, FLT_MIN
 
 
 # Constants for 3D space
@@ -9,6 +10,8 @@ GTRACK_NOMINAL_DOPPLER_SPREAD                       = 1.0               # Defaul
 
 GTRACK_BORESIGHT_STATIC_ANGLE                       = 6*math.pi/180
 GTRACK_BORESIGHT_STATIC_RANGE                       = 2.0
+
+SPREAD_MIN = np.array([1.0, 10*math.pi/180.0, 10*math.pi/180.0, 0.5])
 
 
 def gtrack_sph2cart(sph):
@@ -22,8 +25,8 @@ def gtrack_sph2cart(sph):
     """
 
     c = np.zeros(3, dtype=float)
-    azim = math.radians(sph[1])
-    elev = math.radians(sph[2])
+    azim = sph[1]
+    elev = sph[2]
 
     c[0] = sph[0] * math.cos(elev) * math.sin(azim) # posX
     c[1] = sph[0] * math.cos(elev) * math.cos(azim) # posY
@@ -88,7 +91,6 @@ def gtrack_calcMeasurementSpread(rnge, gate_limits):
         list: Measurement spread.
     """
 
-    FLT_MIN = 1.175494351e-38
     estSpread = np.zeros(4, dtype=float) # [range, azimuth, elevation, doppler]
 
     # Range spread
@@ -131,8 +133,6 @@ def gtrack_calcMeasurementLimits(rnge, gate_limits):
         list: Measurement error limits.
     """
 
-    FLT_MAX = 3.402823466e38
-    FLT_MIN = 1.175494351e-38
     limits = np.zeros(4, dtype=float) # [range, azimuth, elevation, doppler]
 
     # Range limit
@@ -251,10 +251,9 @@ def gtrack_computeMahalanobisPartial(vector, matD):
         float: Partial Mahalanobis distance.
     """
 
-    # Set Doppler to 0 to ignore it,
-    # as partial Mahalanobis distance does not take it into account.
-    vector[3] = 0.0
-    md_part = np.sqrt(np.sum(np.dot(vector, matD) * vector))
+    # Partial Mahalanobis distance does not take doppler component into account.
+    matTmp = np.delete(matD[:3], np.s_[3], axis=1) # Matrix without last row and column of matD
+    md_part = np.sqrt(np.sum(np.dot(vector[:3], matTmp) * vector[:3]))
 
     return md_part
 
