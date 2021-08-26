@@ -3,6 +3,7 @@ import math
 import numpy as np
 import time
 import logging
+import copy
 
 from bitarray import bitarray
 from .constants import *
@@ -29,7 +30,7 @@ def gtrack_unitCreate(trackingParams):
 
     # Unit instance initialization
     # docs/doxygen3D/html/struct_gtrack_unit_instance.html
-    unitInstance = unitInstanceSch.deepcopy()
+    unitInstance = copy.deepcopy(unitInstanceSch)
 
     # Setting parameters
     unitInstance['params']['gatingParams'] = trackingParams['gatingParams']
@@ -159,7 +160,7 @@ def gtrack_create(moduleConfig, objectType, activeModules):
 
     # Module instance initialization
     # docs/doxygen3D/html/struct_gtrack_module_instance.html
-    moduleInstance = moduleInstanceSch.deepcopy()
+    moduleInstance = copy.deepcopy(moduleInstanceSch)
 
     # Set instance parameters from config
     moduleInstance['maxNumPoints'] = moduleConfig['maxNumPoints']
@@ -174,23 +175,28 @@ def gtrack_create(moduleConfig, objectType, activeModules):
     moduleInstance['params']['allocationParams'] = defaultAllocationParams
     moduleInstance['params']['sceneryParams'] = defaultSceneryParams
     moduleInstance['params']['presenceParams'] = defaultPresenceParams
+    moduleInstance['params']['transformParams'] = {
+        'transformationRequired': False,
+        'rotX': [0.0, 0.0],
+        'offsetZ': 0.0
+    }
 
 
     # Overwrite default parameters config parameters if they exist
-    if(moduleConfig['advParams']):
-        if(moduleConfig['advParams']['gatingParams']):
+    if 'advParams' in moduleConfig:
+        if 'gatingParams' in moduleConfig['advParams']:
             moduleInstance['params']['gatingParams'] = moduleConfig['advParams']['gatingParams']
 
-        if(moduleConfig['advParams']['stateParams']):
+        if 'stateParams' in moduleConfig['advParams']:
             moduleInstance['params']['stateParams'] = moduleConfig['advParams']['stateParams']
 
-        if(moduleConfig['advParams']['unrollingParams']):
+        if 'unrollingParams' in moduleConfig['advParams']:
             moduleInstance['params']['unrollingParams'] = moduleConfig['advParams']['unrollingParams']
 
-        if(moduleConfig['advParams']['sceneryParams']):
+        if 'sceneryParams' in moduleConfig['advParams']:
             moduleInstance['params']['sceneryParams'] = moduleConfig['advParams']['sceneryParams']
 
-        if(moduleConfig['advParams']['presenceParams']):
+        if 'presenceParams' in moduleConfig['advParams']:
             moduleInstance['params']['presenceParams'] = moduleConfig['advParams']['presenceParams']
 
     
@@ -208,8 +214,8 @@ def gtrack_create(moduleConfig, objectType, activeModules):
         moduleInstance['isPresenceDetectionEnabled'] = True
         moduleInstance['presenceDetectionCounter'] = 0
         moduleInstance['presenceDetectionOutput'] = 0 
-        moduleInstance['presenceDetectionInitial'] = True
-        moduleInstance['presenceDetectionRaw'] = False
+        moduleInstance['isPresenceDetectionInitial'] = True
+        moduleInstance['presenceDetectionRaw'] = 0
 
     else:
         moduleInstance['isPresenceDetectionEnabled'] = False
@@ -218,14 +224,14 @@ def gtrack_create(moduleConfig, objectType, activeModules):
     # Framerate in [ms]
     moduleInstance['params']['deltaT'] = moduleConfig['deltaT']
     dt = moduleConfig['deltaT']
-    dt2 = pow(dt, 2)
-    dt3 = pow(dt, 3)
-    dt4 = pow(dt, 4)
+    dt2 = float(pow(dt, 2))
+    dt3 = float(pow(dt, 3))
+    dt4 = float(pow(dt, 4))
 
 
     # Maximum expected target acceleration in lateral (X), longitudinal (Y), and vertical (Z) directions in [m/s2]
     # Used to compute processing noise matrix. For 2D options, the vertical component is ignored.
-    moduleConfig['maxAcceleration'] = np.zeros(3, dtype=float)
+    # moduleConfig['maxAcceleration'] = np.zeros(3, dtype=float)
     moduleInstance['params']['maxAcceleration'] = moduleConfig['maxAcceleration']
 
     # Initialize process variance to 1/2 of maximum target acceleration
@@ -317,15 +323,14 @@ def gtrack_create(moduleConfig, objectType, activeModules):
     moduleInstance['params']['initialRadialVelocity'] = moduleConfig['initialRadialVelocity']           # Expected target radial velocity at the moment of detection, m/s.
 
 
-    # TODO Verboseness level
-    # gtrack_log() function
     
-    moduleInstance['verbose'] = moduleInstance['params']['verbose']
+    moduleInstance['verbose'] = moduleConfig['verbose']
+    moduleInstance['params']['verbose'] = moduleInstance['verbose']
 
     # docs/doxygen3D/html/struct_gtrack_unit_instance.html
-    moduleInstance['hTrack'] = [None] * moduleInstance['maxNumTracks']                                  # List of unitInstances
-    moduleInstance['bestScore'] = np.zeros(moduleInstance['maxNumPoints'], dtype=int)                   # List of best scores
-    moduleInstance['bestIndex'] = np.zeros(moduleInstance['maxNumPoints'], dtype=int)                   # List of IDs of best scorers
+    moduleInstance['hTrack'] = [None] * moduleInstance['maxNumTracks']                                    # List of unitInstances
+    moduleInstance['bestScore'] = np.zeros(moduleInstance['maxNumPoints'], dtype=float)                   # List of best scores
+    moduleInstance['bestIndex'] = np.zeros(moduleInstance['maxNumPoints'], dtype=float)                   # List of IDs of best scorers
     
     # Integer division by 2^3? Same as (maxNumPoints-1) // 8?
     # Bit array that holds the indication whether measurement point is associated to one and only one track
@@ -352,36 +357,37 @@ def gtrack_create(moduleConfig, objectType, activeModules):
 
     
     for uid in range(moduleInstance['maxNumTracks']):
-        try:
-            moduleInstance['uidElem'][uid] = uid
-            moduleInstance['freeList'].append(moduleInstance['uidElem'][uid])
+        #try:
+        moduleInstance['uidElem'][uid] = uid
+        moduleInstance['freeList'].append(moduleInstance['uidElem'][uid])
 
-            moduleInstance['params']['uid'] = uid
-            moduleInstance['hTrack'][uid] = gtrack_unitCreate(moduleInstance['params'])
+        moduleInstance['params']['uid'] = uid
+        moduleInstance['hTrack'][uid] = gtrack_unitCreate(moduleInstance['params'])
     
-        except Exception:
-            raise Exception(f'An error has occured while creating a unit instance with Unit Identifier UID: {uid}')
+        #except Exception:
+        #    raise Exception(f'An error has occured while creating a unit instance with Unit Identifier UID: {uid}')
 
+    moduleInstance['freeList'].reverse()
 
     activeModules[objectType] = moduleInstance
 
 
-def gtrack_step(moduleInstance, point, mNum, t, tNum, mIndex, uIndex, presence, bench = None, var = None):
+def gtrack_step(moduleInstance, point, mNum, t, presence, mIndex = None, uIndex = None, bench = None, var = None):
     """Runs a single step of given algorithm instance (module) with input point cloud data. 
     Process one frame of measurements with a given instance of the gtrack algorithm.
 
     Args:
         moduleInstance (dict): Module instance
-        point (2D-list): Point cloud of input measurements in form of [range, azimuth, elevation, velocity, snr]
+        point (2D-list): Point cloud of input measurements in form of [range, azimuth, elevation, velocity, snr]. Azimuth and Elevation is in radians.
         mNum (int): Number of input measurements.
         var (list, optional): List of input measurement variances. Defaults to None if variances are unknown.
 
     Returns:
-        t (list): List of target descriptor
+        t (list): List of target descriptors
         tNum (int): Number of populated target descriptors
-        mIndex (int): [description]
+        mIndex ([type]): [description]
         uIndex ([type]): [description]
-        presence (bool): Presence indicator. If configured, this function returns presence indication, FALSE if occupancy area is empty and TRUE if occupied
+        presence (int): Presence indicator. If configured, this function returns presence indication, FALSE if occupancy area is empty and TRUE if occupied
         bench (list): Benchmarking results. Each result is a timestamp. This function populates the list with with the timestamps which are generated with time.monotonic()
         Defaults to None when benchmarking isn't required.
     """
@@ -393,31 +399,36 @@ def gtrack_step(moduleInstance, point, mNum, t, tNum, mIndex, uIndex, presence, 
     if (mNum > moduleInstance['maxNumPoints']):
         mNum = moduleInstance['maxNumPoints']
 
-        arrSize = (moduleInstance['maxNumPoints']>>3) + 1
-        moduleInstance['isUniqueIndex'] = bitarray('1111 1111')*arrSize
-        moduleInstance['isStaticIndex'] = bitarray('0000 0000')*arrSize
+    arrSize = (moduleInstance['maxNumPoints']>>3) + 1
+    moduleInstance['isUniqueIndex'] = bitarray('1111 1111')*arrSize
+    moduleInstance['isStaticIndex'] = bitarray('0000 0000')*arrSize
 
-        for n in range(mNum):
-            moduleInstance['bestScore'][n] = FLT_MAX
+    for n in range(mNum):
+        moduleInstance['bestScore'][n] = FLT_MAX
 
-            # if GTRACK_3D
-            # If in ceiling mount configuration, ignore points at direct boresight
-            if moduleInstance['isCeilingMounted']:
-                if gtrack_isInsideBoresightStaticZone(point[n]):
-                    moduleInstance['bestIndex'][n] = GTRACK_ID_POINT_BEHIND_THE_WALL
-                    continue
+        # if GTRACK_3D
+        # If in ceiling mount configuration, ignore points at direct boresight
+        if moduleInstance['isCeilingMounted']:
+            if gtrack_isInsideBoresightStaticZone(point[n]):
+                moduleInstance['bestIndex'][n] = GTRACK_ID_POINT_BEHIND_THE_WALL
+                continue
 
-            
-            if moduleInstance['params']['transormParams']['transformationRequired']:
+        
+        if moduleInstance['params']['sceneryParams']['numBoundaryBoxes']:
+
+            # If boundaries exists, set index to outside, and overwrite if inside the boundary
+            moduleInstance['bestIndex'][n] = GTRACK_ID_POINT_BEHIND_THE_WALL
+
+            if moduleInstance['params']['transformParams']['transformationRequired']:
                 pos = gtrack_sph2cart(point[n])
-                posW = gtrack_censor2world(pos, moduleInstance['params']['transormParams'])
+                posW = gtrack_censor2world(pos, moduleInstance['params']['transformParams'])
 
             else:
                 posW = gtrack_sph2cart(point[n])
 
-            
+        
             for numBoundaryBoxes in range(moduleInstance['params']['sceneryParams']['numBoundaryBoxes']):
-                if gtrack_isPointInsideBox(posW, moduleInstance['params']['sceneryParams']['BoundaryBox'][numBoundaryBoxes]):
+                if gtrack_isPointInsideBox(posW, moduleInstance['params']['sceneryParams']['boundaryBox'][numBoundaryBoxes]):
                     # Inside boundary box
                     if (math.fabs(point[n][3]) > FLT_MIN):
                         # Valid dynamic point
@@ -427,7 +438,7 @@ def gtrack_step(moduleInstance, point, mNum, t, tNum, mIndex, uIndex, presence, 
                         # Additional check for static points
                         if moduleInstance['params']['sceneryParams']['numStaticBoxes']:
                             for numStaticBoxes in range(moduleInstance['params']['sceneryParams']['numStaticBoxes']):
-                                if gtrack_isPointInsideBox(posW, moduleInstance['params']['sceneryParams']['StaticBox'][numStaticBoxes]):
+                                if gtrack_isPointInsideBox(posW, moduleInstance['params']['sceneryParams']['staticBox'][numStaticBoxes]):
                                     # Valid static point
                                     moduleInstance['bestIndex'][n] = GTRACK_ID_POINT_NOT_ASSOCIATED
                                     break
@@ -439,7 +450,7 @@ def gtrack_step(moduleInstance, point, mNum, t, tNum, mIndex, uIndex, presence, 
                     
 
                     break
-        
+    
         else:
             # No boundaries, hence point is valid
             moduleInstance['bestIndex'][n] = GTRACK_ID_POINT_NOT_ASSOCIATED
@@ -457,7 +468,7 @@ def gtrack_step(moduleInstance, point, mNum, t, tNum, mIndex, uIndex, presence, 
         gtrack_moduleAllocate(moduleInstance, point, mNum)
 
         bench[GTRACK_BENCHMARK_ALLOCATE] = time.monotonic()
-        gtrack_moduleUpdate(moduleInstance, point, var, mNum)
+        gtrack_moduleUpdate(moduleInstance, point, mNum, var)
 
         bench[GTRACK_BENCHMARK_UPDATE] = time.monotonic()
         presence = gtrack_modulePresence(moduleInstance, presence)
@@ -471,23 +482,23 @@ def gtrack_step(moduleInstance, point, mNum, t, tNum, mIndex, uIndex, presence, 
         gtrack_modulePredict(moduleInstance)
         gtrack_moduleAssociate(moduleInstance, point, mNum)
         gtrack_moduleAllocate(moduleInstance, point, mNum)
-        gtrack_moduleUpdate(moduleInstance, point, var, mNum)
+        gtrack_moduleUpdate(moduleInstance, point, mNum, var)
         presence = gtrack_modulePresence(moduleInstance, presence)
         tNum = gtrack_moduleReport(moduleInstance, t)
 
 
     # If requested, report unique bitmap
-    if (uIndex != 0):
+    if uIndex is not None:
         if mNum:
             for n in range(((mNum-1)>>3)+1):
                 uIndex[n] = moduleInstance['isUniqueIndex'][n]
 
     
     # If requested, report UIDs associated with measurement vector
-    if (mIndex != 0):
+    if mIndex is not None:
         for n in range(mNum):
             mIndex[n] = moduleInstance['bestIndex'][n]
 
 
-    return tNum, mIndex, uIndex, presence, bench
+    return tNum, presence
 
