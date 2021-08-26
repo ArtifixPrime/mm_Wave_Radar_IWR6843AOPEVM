@@ -1,5 +1,3 @@
-from gtrack.tracking_algorithm import gtrack_unitStart
-import numpy as np
 import math
 import logging
 
@@ -27,13 +25,13 @@ def gtrack_modulePredict(moduleInstance):
     """
 
     # List of active unit identifiers
-    activeElements = moduleInstance['activeList']
+    activeElements = moduleInstance['activeList'].copy()
 
     for uid in activeElements:
         
         # Raise an assertion error if unit identifier is ever larger than configured maxmimum number of tracks.
         # This should never happen.
-        assert (uid <= moduleInstance['maxNumTracks']), 'Active unit identifier is larger than maximum number of tracked objects'
+        assert (uid <= moduleInstance['maxNumTracks']), 'Active unit identifier is larger than maximum number of tracked objects!'
 
         gtrack_unitPredict(moduleInstance['hTrack'][uid])
 
@@ -47,7 +45,7 @@ def gtrack_moduleAssociate(moduleInstance, point, num):
         num (int): Number of input measurements (size of list)
     """
 
-    activeElements = moduleInstance['activeList']
+    activeElements = moduleInstance['activeList'].copy()
 
     for uid in activeElements:
 
@@ -72,7 +70,7 @@ def gtrack_moduleAllocate(moduleInstance, point, num):
     """
 
     allocationSet = {
-        'isValid': None,
+        'isValid': False,
         'numAllocatedPoints': 0,
         'totalSNR': 0.0,
         'mCenter': []
@@ -81,8 +79,7 @@ def gtrack_moduleAllocate(moduleInstance, point, num):
     snrThreMax = MAX_SNR_RATIO_P4 * moduleInstance['params']['allocationParams']['snrThre']
     snrThreFixed = snrThreMax/3.0
     maxAllocNum = 1
-
-    allocationSet['isValid'] = False
+    
 
     for n in range(num):
         shift = n>>3
@@ -120,8 +117,7 @@ def gtrack_moduleAllocate(moduleInstance, point, num):
             mSum = point[n][:4]
 
 
-            for idx in range(num):
-                k = idx+1
+            for k in range(n+1, num):
 
                 shift = k>>3
                 k16 = int2ba(k,length=16, signed=False)
@@ -138,10 +134,10 @@ def gtrack_moduleAllocate(moduleInstance, point, num):
                     if (math.fabs(point[k][3]) < FLT_EPSILON):
                         continue
 
-                    mCurrent = point[k]
+                    mCurrent = point[k][:4]
                     mCurrent[3] = gtrack_unrollRadialVelocity(moduleInstance['params']['maxRadialVelocity'], mCenter[3], mCurrent[3])
 
-                    if (math.fabs(mCurrent[3]) < moduleInstance['params']['allocationParams']['maxVelThre']):
+                    if (math.fabs(mCurrent[3] - mCenter[3]) < moduleInstance['params']['allocationParams']['maxVelThre']):
 
                         dist = gtrack_calcDistance(mCenter, mCurrent)
                         
@@ -152,14 +148,13 @@ def gtrack_moduleAllocate(moduleInstance, point, num):
                             allocNum += 1
                             allocSNR += point[k][4]
 
-                            mSum = mCurrent + mSum
-
                             # Update centroid
+                            mSum = mCurrent + mSum
                             factor = 1.0/float(allocNum)
                             mCenter = mSum * factor
 
 
-            if ((allocNum > maxAllocNum) and (math.fabs(mCenter[3]) >= moduleInstance['params']['allocationParams']['maxVelThre'])):
+            if ((allocNum > maxAllocNum) and (math.fabs(mCenter[3]) >= moduleInstance['params']['allocationParams']['velocityThre'])):
                 maxAllocNum = allocNum
                 allocationSet['isValid'] = True
                 allocationSet['numAllocatedPoints'] = allocNum
@@ -167,7 +162,7 @@ def gtrack_moduleAllocate(moduleInstance, point, num):
                 allocationSet['totalSNR'] = allocSNR
 
                 for k in range(allocNum):
-                    moduleInstance['allocIndexStored'][k] = moduleInstance['allocIndexCurrent'][k]
+                    moduleInstance['allocIndexStored'].insert(k, moduleInstance['allocIndexCurrent'][k])
 
     # Presence detection
     if (moduleInstance['isPresenceDetectionEnabled'] and allocationSet['isValid'] and (moduleInstance['presenceDetectionRaw'] == 0)):
@@ -175,7 +170,7 @@ def gtrack_moduleAllocate(moduleInstance, point, num):
         # If presence detection enabled AND we have a valid set and haven't detected yet => proceed with presence detection
         if(
             (allocationSet['numAllocatedPoints'] >= moduleInstance['params']['presenceParams']['pointsThre']) and
-            (moduleInstance['isPresenceDetectionInitial'] or (allocationSet['mCenter'][3] <= moduleInstance['params']['allocationParams']['maxVelThre']))):
+            (moduleInstance['isPresenceDetectionInitial'] or (allocationSet['mCenter'][3] <= -moduleInstance['params']['presenceParams']['velocityThre']))):
 
             mPos = gtrack_sph2cart(allocationSet['mCenter'])
 
@@ -191,11 +186,11 @@ def gtrack_moduleAllocate(moduleInstance, point, num):
 
     if allocationSet['isValid']:
         if (
-            (allocationSet['numAllocatedPoints'] >= moduleInstance['params']['presenceParams']['pointsThre']) and
-            (math.fabs(allocationSet['mCenter'][3]) >= moduleInstance['params']['allocationParams']['maxVelThre'])):
+            (allocationSet['numAllocatedPoints'] >= moduleInstance['params']['allocationParams']['pointsThre']) and
+            (math.fabs(allocationSet['mCenter'][3]) >= moduleInstance['params']['allocationParams']['velocityThre'])):
 
             isBehind = False
-            activeElements = moduleInstance['activeList']
+            activeElements = moduleInstance['activeList'].copy()
 
             for uid in activeElements:
 
@@ -227,13 +222,13 @@ def gtrack_moduleAllocate(moduleInstance, point, num):
                         snrThreshold = snrRatio4*moduleInstance['params']['allocationParams']['snrThre']
 
             
-            if (moduleInstance['verbose'] >= VERBOSE_DEBUG):
+            if (log.isEnabledFor(logging.DEBUG)):
                 coordinates = f''
-                for coord in allocationSet['mCenter']:
-                    coordinates += f"{allocationSet['mCenter'][coord], }"
+                for coord in range(len(allocationSet['mCenter'])):
+                    coordinates += f"{allocationSet['mCenter'][coord]}, "
 
                 log_string = f"{moduleInstance['heartBeat']}:Allocation set {allocationSet['numAllocatedPoints']} points, centroid at [{coordinates}], total SNR {allocationSet['totalSNR']} > {snrThreshold}\n"
-                logging.debug(log_string)
+                log.debug(log_string)
 
             
             if (allocationSet['totalSNR'] > snrThreshold):
@@ -242,7 +237,7 @@ def gtrack_moduleAllocate(moduleInstance, point, num):
 
                     # Temporary Array of measurement indices for stored set-under-construction
                     allocIndex = moduleInstance['allocIndexStored'][k]
-                    moduleInstance['bestIndex'][allocIndex] = tElemFree
+                    moduleInstance['bestIndex'][allocIndex] = int(tElemFree)
 
 
                 # Allocate new tracker
@@ -278,7 +273,7 @@ def gtrack_moduleUpdate(moduleInstance, point, num, var = None):
 
     for uid in activeList:
 
-        state = gtrack_unitUpdate(moduleInstance['hTrack'][uid], point, var, moduleInstance['bestIndex'],  moduleInstance['isUniqueIndex'], num)
+        state = gtrack_unitUpdate(moduleInstance['hTrack'][uid], point, moduleInstance['bestIndex'],  moduleInstance['isUniqueIndex'], num, var)
 
         if (state == TRACK_STATE_FREE):
             tElemToRemove = uid
@@ -304,7 +299,7 @@ def gtrack_modulePresence(moduleInstance, presence):
         presence (int): Presence indicator
 
     Returns:
-        int: Presence indicator
+        bool: Presence indicator
     """
 
 
@@ -315,14 +310,14 @@ def gtrack_modulePresence(moduleInstance, presence):
     if moduleInstance['isPresenceDetectionEnabled']:
         if (moduleInstance['presenceDetectionRaw'] == 0):
 
-            activeList = moduleInstance['activeList']
+            activeList = moduleInstance['activeList'].copy()
             for uid in activeList:
                 activeUnitInstance = moduleInstance['hTrack'][uid]
 
-                if moduleInstance['params']['transormParams']['transformationRequired']:
+                if moduleInstance['params']['transformParams']['transformationRequired']:
                     # Get centroid of associated measurement points in cartesian form
                     mCenter = activeUnitInstance['uPos']
-                    posW = gtrack_censor2world(mCenter, moduleInstance['params']['transormParams'])
+                    posW = gtrack_censor2world(mCenter, moduleInstance['params']['transformParams'])
 
                 else:
                     posW = activeUnitInstance['uPos']
@@ -334,22 +329,21 @@ def gtrack_modulePresence(moduleInstance, presence):
                         break
 
         
-        if moduleInstance['presenceDetectionRaw']:
-            moduleInstance['presenceDetectionOutput'] = 1
+    if moduleInstance['presenceDetectionRaw']:
+        moduleInstance['presenceDetectionOutput'] = 1
+        moduleInstance['presenceDetectionCounter'] = 0
+
+    elif (moduleInstance['presenceDetectionOutput'] == 1):
+        moduleInstance['presenceDetectionCounter'] +=1
+
+        log_string = f"{moduleInstance['heartBeat']}: Presence ON, Counter {moduleInstance['presenceDetectionCounter']}\n"
+        log.debug(log_string)
+
+        
+        if (moduleInstance['presenceDetectionCounter'] >= moduleInstance['params']['presenceParams']['on2offThre']):
+            moduleInstance['isPresenceDetectionInitial'] = False
+            moduleInstance['presenceDetectionOutput'] = 0
             moduleInstance['presenceDetectionCounter'] = 0
-
-        else:
-            if (moduleInstance['presenceDetectionOutput'] == 1):
-                moduleInstance['presenceDetectionCounter'] +=1
-
-                log_string = f"{moduleInstance['heartBeat']}: Presence ON, Counter {moduleInstance['presenceDetectionCounter']}\n"
-                log.debug(log_string)
-
-                
-                if (moduleInstance['presenceDetectionCounter'] >= moduleInstance['params']['presenceParams']['on2offThre']):
-                    moduleInstance['isPresenceDetectionInitial'] = False
-                    moduleInstance['presenceDetectionOutput'] = 0
-                    moduleInstance['presenceDetectionCounter'] = 0
 
     
     if (oldPresence != moduleInstance['presenceDetectionOutput']):
@@ -380,11 +374,11 @@ def gtrack_moduleReport(moduleInstance, t):
     """
 
     tNum = 0
-    activeList = moduleInstance['activeList']
+    activeList = moduleInstance['activeList'].copy()
 
     for uid in activeList:
 
-        gtrack_unitReport(moduleInstance['hTrack'][uid], t[tNum])
+        gtrack_unitReport(moduleInstance['hTrack'][uid], t, tNum)
         tNum +=1
 
     return tNum
