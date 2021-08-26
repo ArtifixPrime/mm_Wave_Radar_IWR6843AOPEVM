@@ -190,8 +190,8 @@ def gtrack_create(moduleConfig, objectType, activeModules):
         if 'stateParams' in moduleConfig['advParams']:
             moduleInstance['params']['stateParams'] = moduleConfig['advParams']['stateParams']
 
-        if 'unrollingParams' in moduleConfig['advParams']:
-            moduleInstance['params']['unrollingParams'] = moduleConfig['advParams']['unrollingParams']
+        if 'allocationParams' in moduleConfig['advParams']:
+            moduleInstance['params']['allocationParams'] = moduleConfig['advParams']['allocationParams']
 
         if 'sceneryParams' in moduleConfig['advParams']:
             moduleInstance['params']['sceneryParams'] = moduleConfig['advParams']['sceneryParams']
