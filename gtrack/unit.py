@@ -1,6 +1,5 @@
 import numpy as np
 import logging
-from bitarray import bitarray
 from bitarray.util import int2ba, ba2int
 
 from .constants import *
@@ -27,13 +26,13 @@ def gtrack_unitPredict(unitInstance):
 
     else:
         # S_apriori_hat = F * S_hat
-        unitInstance['S_apriori_hat'] = np.matmul(unitInstance['F'], unitInstance['S_hat'])
+        unitInstance['S_apriori_hat'] = np.matmul(unitInstance['params']['F'], unitInstance['S_hat'])
         
         if unitInstance['skipProcessNoiseEst'] == False:
-            # P_apriori = F * P * F * Q
-            tmp1 = np.matmul(unitInstance['F'], unitInstance['P_hat'])
-            tmp2 = np.matmul(tmp1, unitInstance['F'])
-            tmp3 = tmp2 + unitInstance['Q']
+            # P_apriori = F * P * F.T + Q
+            tmp1 = np.matmul(unitInstance['params']['F'], unitInstance['P_hat'])
+            tmp2 = np.matmul(tmp1, unitInstance['params']['F'].T)
+            tmp3 = tmp2 + unitInstance['params']['Q']
 
             # Same as gtrack_matrixMakeSymmetrical()
             # It makes matrix tmp3 symmetrical, by keeping the diagonal 
@@ -41,14 +40,14 @@ def gtrack_unitPredict(unitInstance):
             unitInstance['P_apriori_hat'] = 0.5*(tmp3 + tmp3.T)
         
         
-        unitInstance['skipPrediction'] = False
-        unitInstance['skipProcessNoiseEst'] = False
+    unitInstance['skipPrediction'] = False
+    unitInstance['skipProcessNoiseEst'] = False
 
-        spherical = gtrack_cartesian2spherical(unitInstance['currentStateVectorType'], unitInstance['S_apriori_hat'])
-        unitInstance['H_s'] = spherical
+    spherical = gtrack_cartesian2spherical(unitInstance['currentStateVectorType'], unitInstance['S_apriori_hat'])
+    unitInstance['H_s'] = spherical
 
-        limits = gtrack_calcMeasurementLimits(unitInstance['H_s'][0], unitInstance['params']['gatingParams']['limits'])
-        unitInstance['H_limits'] = limits
+    limits = gtrack_calcMeasurementLimits(unitInstance['H_s'][0], unitInstance['params']['gatingParams']['limits'])
+    unitInstance['H_limits'] = limits
 
 
     if log.isEnabledFor(logging.DEBUG):
@@ -57,8 +56,8 @@ def gtrack_unitPredict(unitInstance):
 
         # Print side by side unitInstance['S_hat'] unitInstance['S_apriori_hat']
         for row in range(len(unitInstance['S_hat'])):
-            row_S_hat = np.array_str(unitInstance['S_hat'][row]).replace('[', '').replace(']', '').strip()
-            row_S_apr = np.array_str(unitInstance['S_apriori_hat'][row]).replace('[', '').replace(']', '').strip()
+            row_S_hat = unitInstance['S_hat'][row]
+            row_S_apr = unitInstance['S_apriori_hat'][row]
 
             log_string += f"{row_S_hat}\t|\t{row_S_apr}\n"
 
@@ -72,8 +71,8 @@ def gtrack_unitPredict(unitInstance):
         log_string = np.array_str(unitInstance['P_hat']).replace('[', '').replace(']', '').strip()
         log.debug(log_string)
 
-        # Print unitInstance['Q']
-        log_string = np.array_str(unitInstance['Q']).replace('[', '').replace(']', '').strip()
+        # Print unitInstance['params']['Q']
+        log_string = np.array_str(unitInstance['params']['Q']).replace('[', '').replace(']', '').strip()
         log.debug(log_string)
 
         # Print unitInstance['P_apriori_hat']
@@ -105,8 +104,10 @@ def gtrack_unitScore(unitInstance, point, bestScore, bestIndex, isUnique, isStat
 
     # Doppler limits
     limits = unitInstance['H_limits']
-
+    # Add doppler agility
     limits[3] = min(2*unitInstance['H_limits'][3], 2*unitInstance['estSpread'][3])
+
+    unitInstance['numAssosiatedPoints'] = 0
 
 
     if unitInstance['isAssociationGhostMarking']:
@@ -117,11 +118,12 @@ def gtrack_unitScore(unitInstance, point, bestScore, bestIndex, isUnique, isStat
 
     if unitInstance['isAssociationHeightIgnore']:
         # Ignore logdet for 3D CM
-        logdet = 0
+        logdet = 0.0
         posHs = gtrack_sph2cart(unitInstance['H_s'])
 
     else:
-        logdet = math.log(unitInstance['gC_det'])
+        # logdet = math.log(unitInstance['gC_det'])
+        logdet = unitInstance['gC_det'][1]
 
 
     for n in range(num):
@@ -130,16 +132,16 @@ def gtrack_unitScore(unitInstance, point, bestScore, bestIndex, isUnique, isStat
 
         if unitInstance['isAssociationHeightIgnore']:
             posU = gtrack_sph2cart(point[n])
-            posHs[1] = posU[1]      # [posX, posY, posZ]
+            posHs[1] = posU[1]      # posY
             hs_projection = gtrack_cart2sph(posHs)
 
-            u_tilda = point[n] - hs_projection
+            u_tilda = point[n][:4] - hs_projection
 
         else:
-            u_tilda = point[n] - unitInstance['H_s']
+            u_tilda = point[n][:4] - unitInstance['H_s']
 
     
-        rvOut = gtrack_unrollRadialVelocity(unitInstance['maxRadialVelocity'], unitInstance['H_s'], point[n][3])
+        rvOut = gtrack_unrollRadialVelocity(unitInstance['maxRadialVelocity'], unitInstance['H_s'][3], point[n][3])
         # Doppler
         u_tilda[3] = rvOut - unitInstance['H_s'][3]
 
@@ -166,7 +168,7 @@ def gtrack_unitScore(unitInstance, point, bestScore, bestIndex, isUnique, isStat
                 score_ghost = 100.0
 
                 # Check whether it is likely to be a single multipath reflection
-                u_tilda_ghost = point[n] - hs_ghost
+                u_tilda_ghost = point[n][:4] - hs_ghost
                 mahalanobis = gtrack_computeMahalanobis(u_tilda_ghost, unitInstance['gC_inv'])
 
                 if (mahalanobis < 1.0):
@@ -298,11 +300,14 @@ def gtrack_unitEvent(unitInstance, num, numReliable):
         numReliable (int): Number of reliable (dynamic AND unique) measurements
     """
 
+    isInsideBoundary = False
+    isInsideStatic = False
+
     if unitInstance['params']['transformParams']['transformationRequired']:
-        posW = gtrack_censor2world(unitInstance['S_hat'], unitInstance['params']['transformParams'])
+        posW = gtrack_censor2world(unitInstance['S_hat'][:3], unitInstance['params']['transformParams'])
 
     else:
-        posW = unitInstance['S_hat'][0:3] # [posX, posY, posZ]
+        posW = unitInstance['S_hat'][:3] # [posX, posY, posZ]
 
 
     for numBoxes in range(unitInstance['params']['sceneryParams']['numBoundaryBoxes']):
@@ -425,7 +430,7 @@ def gtrack_unitEvent(unitInstance, num, numReliable):
                 log.debug(log_string)
 
 
-def gtrack_unitStart(uid, timeStamp, tid, unitCenter, isBehind):
+def gtrack_unitStart(unitInstance, timeStamp, tid, unitCenter, isBehind):
     """Start target tracking. This function is called during modules' allocation step,
     once a new set of points passes allocation thresholds.
 
@@ -437,12 +442,10 @@ def gtrack_unitStart(uid, timeStamp, tid, unitCenter, isBehind):
         isBehind (bool): Indicates whether the new unit behind another existing target or not.
     """
 
-    # Unit instance init
-    unitInstance = uid
 
     unitInstance['tid'] = tid
-    unitInstance['heartBeatCount'] = timeStamp
-    unitInstance['allocationTime'] = timeStamp
+    unitInstance['heartBeatCount'] = timeStamp*1000
+    unitInstance['allocationTime'] = timeStamp*1000     # allocation time [ms]
     unitInstance['allocationRange'] = unitCenter[0]     # range [m]
     unitInstance['allocationVelocity'] = unitCenter[3]  # Doppler [m/s]
 
@@ -488,17 +491,14 @@ def gtrack_unitStart(uid, timeStamp, tid, unitCenter, isBehind):
 
     
     # Initialize a-priori Process covariance
-    if unitInstance['currentStateVectorType'] == (STATE_VECTORS_2DV or STATE_VECTORS_2DA):
+    if unitInstance['currentStateVectorType'] == STATE_VECTORS_2DV or unitInstance['currentStateVectorType'] == STATE_VECTORS_2DA:
         pInit = np.array([0.0, 0.0, 0.5, 0.5, 1.0, 1.0], dtype=float) # Output matrix diagonal
         unitInstance['P_apriori_hat'] = np.diag(pInit)
 
-        for n in range(6):
-            unitInstance['P_apriori_hat'][n*6 +n] = pInit[n]
-
         unitInstance['gD'] = np.zeros((3,3), dtype=float)
-        pass
+        
 
-    elif unitInstance['currentStateVectorType'] == (STATE_VECTORS_3DV or STATE_VECTORS_3DA):
+    elif unitInstance['currentStateVectorType'] == STATE_VECTORS_3DV or  unitInstance['currentStateVectorType'] == STATE_VECTORS_3DA:
         # unitInstance['P_apriori_hat'] = np.eye(9); pInit is used instead of eye matrix as per gtrack algorithm in 
         pInit = np.array([0.0, 0.0, 0.0, 0.5, 0.5, 0.5, 1.0, 1.0, 1.0], dtype=float) # Output matrix diagonal
         unitInstance['P_apriori_hat'] = np.diag(pInit)
@@ -528,11 +528,15 @@ def gtrack_unitUpdate(unitInstance, point, pInd, isUnique, num, var = None):
         [type]: [description]
     """
 
-    if unitInstance['currentStateVectorType'] == (STATE_VECTORS_2DV or STATE_VECTORS_2DA):
-        spreadMin = np.array([1.0, 10*math.pi/180., 0.5])
+    if (unitInstance['currentStateVectorType'] == STATE_VECTORS_3DV or 
+        unitInstance['currentStateVectorType'] == STATE_VECTORS_3DA):
+        spreadMin = np.array([1.0, 10*math.pi/180.0, 0.5])
 
-    elif unitInstance['currentStateVectorType'] == (STATE_VECTORS_3DV or STATE_VECTORS_3DA):
-        spreadMin = np.array([1.0, 10*math.pi/180., 10*math.pi/180., 0.5])
+    elif (unitInstance['currentStateVectorType'] == STATE_VECTORS_3DV or 
+        unitInstance['currentStateVectorType'] == STATE_VECTORS_3DA):
+        spreadMin = np.array([1.0, 10*math.pi/180.0, 10*math.pi/180.0, 0.5])
+
+    spreadMin = SPREAD_MIN
 
 
     myPointNum = 0
@@ -553,6 +557,7 @@ def gtrack_unitUpdate(unitInstance, point, pInd, isUnique, num, var = None):
     uvar_sum = np.zeros(4, dtype=float)
     u_max = (-FLT_MAX) * np.ones(4, dtype=float)
     u_min = FLT_MAX * np.ones(4, dtype=float)
+    uvar_mean = np.zeros(4, dtype=float)
 
 
     # Compute means of associated measurement points
@@ -560,7 +565,7 @@ def gtrack_unitUpdate(unitInstance, point, pInd, isUnique, num, var = None):
     for n in range(num):
         if(pInd[n] == unitInstance['uid']):
 
-            u = point[n]
+            u = point[n][:4]
 
             if (var is not None):
                 uvar = var[n]
@@ -763,7 +768,7 @@ def gtrack_unitUpdate(unitInstance, point, pInd, isUnique, num, var = None):
 
     if myGoodPointNum:
         # Compute matRm, Measurement Noise covariance matrix
-        if (var is None):
+        if var is None:
             for m, estSpread in enumerate(unitInstance['estSpread']):
                 # Spread is covered by 2 sigmas
                 # sigma = unitInstance['estSpread'][m]/2
@@ -791,7 +796,7 @@ def gtrack_unitUpdate(unitInstance, point, pInd, isUnique, num, var = None):
         if (myGoodPointNum > GTRACK_MIN_POINTS_TO_UPDATE_DISPERSION):
             # Update persistant group dispersion based on instantaneous matD
             # The factor alpha goes from maximum (1.0) at the first allocation down to minimum of 0.1 once the target has been observed for a long time
-            alpha = (float(myGoodPointNum)/unitInstance['estNumOfPoints'])
+            alpha = float(myGoodPointNum)/unitInstance['estNumOfPoints']
 
             # Filter covariance matrix with filtering coefficient alpha
             unitInstance['gD'] = (1-alpha)*unitInstance['gD'] + alpha*matD
@@ -811,9 +816,9 @@ def gtrack_unitUpdate(unitInstance, point, pInd, isUnique, num, var = None):
         # alpha is weighting factor that is the function of the number of observed poionts versus total number of reflections in a group
         # alpha = (unitInstance['maxAssociatedPoints']-num)/((unitInstance['maxAssociatedPoints']-1)*num) unitInstance['maxAssociatedPoints']
 
-        alpha = (float(unitInstance['estNumOfPoints']))/((unitInstance['estNumOfPoints']-1)*myGoodPointNum)
+        alpha = (float(unitInstance['estNumOfPoints'])-myGoodPointNum)/((unitInstance['estNumOfPoints']-1)*myGoodPointNum)
 
-        rm_diag = np.diag(unitInstance['gD'])
+        rm_diag = np.diag(unitInstance['gD']).copy()
 
         for n in range(len(uvar_mean)):
             rm_diag[n] = uvar_mean[n]/myGoodPointNum + rm_diag[n]*alpha
@@ -824,7 +829,7 @@ def gtrack_unitUpdate(unitInstance, point, pInd, isUnique, num, var = None):
         if log.isEnabledFor(logging.DEBUG):
             log_string = f"{unitInstance['heartBeatCount']}: uid[{unitInstance['uid']}]: spread\n"
             log.debug(log_string)
-            log_string = np.array_str(unitInstance['estSperad']).replace('[', '').replace(']', '').strip()
+            log_string = np.array_str(unitInstance['estSpread']).replace('[', '').replace(']', '').strip()
             log.debug(log_string)
 
             log_string = f"{unitInstance['heartBeatCount']}: uid[{unitInstance['uid']}]: Rm\n"
@@ -909,7 +914,7 @@ def gtrack_unitUpdate(unitInstance, point, pInd, isUnique, num, var = None):
 
         # Covariance estimation
         # P_hat = P_apriori_hat - matK*matJ*matP
-        unitInstance['P_hat'] = unitInstance['P_apriori_hat'] - np.matmul(matK, matPJT)
+        unitInstance['P_hat'] = unitInstance['P_apriori_hat'] - np.matmul(matK, matPJT.T)
 
 
         # Compute groupCovariance gC (will be used in gating)
@@ -918,7 +923,12 @@ def gtrack_unitUpdate(unitInstance, point, pInd, isUnique, num, var = None):
 
         # Compute inverse of group innovation
         unitInstance['gC_inv'] = np.linalg.inv(unitInstance['gC'])
-        unitInstance['gC_det'] = np.linalg.det(unitInstance['gC'])
+
+        # This method may return a negative determinant, which causes an issue when calculating a logarithm of gC_det in gtrack_unitScore() function.
+        # unitInstance['gC_det'] = np.linalg.det(unitInstance['gC'])
+        # For this reason, logarithm of the determinant is computed directly in using slogdet() method.
+        sign, logdet = np.linalg.slogdet(unitInstance['gC'])
+        unitInstance['gC_det'] = [sign * np.exp(logdet), logdet] # [determinant, logarithm of determinant]
 
         if log.isEnabledFor(logging.DEBUG):
             log_string = f"{unitInstance['heartBeatCount']}: uid[{unitInstance['uid']}]: gC\n"
@@ -939,7 +949,7 @@ def gtrack_unitUpdate(unitInstance, point, pInd, isUnique, num, var = None):
 
 
         unitInstance['S_hat'] = unitInstance['S_apriori_hat']
-        unitInstance['uPos'] = unitInstance['S_apriori_hat']
+        unitInstance['uPos'] = unitInstance['S_apriori_hat'][:3]
         unitInstance['P_hat'] = unitInstance['P_apriori_hat']
 
 
@@ -1012,7 +1022,7 @@ def gtrack_unitUpdate(unitInstance, point, pInd, isUnique, num, var = None):
     return unitInstance['state']
 
 
-def gtrack_unitReport(unitInstance, targetDesc):
+def gtrack_unitReport(unitInstance, t, tNum):
     """Report gtrack unit results to the target descriptor
 
     Args:
@@ -1020,6 +1030,7 @@ def gtrack_unitReport(unitInstance, targetDesc):
         targetDesc (dict): Target descriptor
     """
 
+    targetDesc = {}
     targetDesc['uid'] = unitInstance['uid']
     targetDesc['tid'] = unitInstance['tid']
 
@@ -1029,3 +1040,17 @@ def gtrack_unitReport(unitInstance, targetDesc):
     targetDesc['dim'] = unitInstance['estDim']
     targetDesc['uCenter'] = unitInstance['uCenter']
     targetDesc['confidenceLevel'] = unitInstance['confidenceLevel']
+
+    description  = f"Description of a target with uid[{targetDesc['uid']}] and tid[{targetDesc['tid']}].\n"
+    description += f"Target position at x: {targetDesc['S'][0]:.2f} m, y: {targetDesc['S'][1]:.2f} m, z: {targetDesc['S'][2]:.2f} m.\n"
+    description += f"Target velocity in direction x: {targetDesc['S'][3]:.2f} m/s, y: {targetDesc['S'][4]:.2f} m/s, z: {targetDesc['S'][5]:.2f} m/s.\n"
+    description += f"Target acceleration in direction x: {targetDesc['S'][6]:.2f} m/s2, y: {targetDesc['S'][7]:.2f} m/s2, z: {targetDesc['S'][8]:.2f} m/s2.\n"
+    description += f"Target gain factor: {targetDesc['G']}.\n"
+    description += f"Estimated target dimensions, depth: {targetDesc['dim'][0]:.2f}, width: {targetDesc['dim'][1]:.2f}, height: {targetDesc['dim'][2]:.2f}.\n"
+    description += f"Estimated radial velocity of target: {targetDesc['dim'][3]:.2f}.\n"
+    description += f"Measurement centroid position, range: {targetDesc['uCenter'][0]:.2f}, azimuth: {targetDesc['uCenter'][1]:.2f}, elevation: {targetDesc['uCenter'][2]:.2f}, doppler: {targetDesc['uCenter'][3]:.2f}.\n"
+    description += f"Target confidence level: {targetDesc['confidenceLevel']:.2f}.\n"
+
+    log.info(description)
+
+    t.insert(tNum, targetDesc)
