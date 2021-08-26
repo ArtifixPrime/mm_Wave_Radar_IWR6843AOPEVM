@@ -19,7 +19,7 @@ def gtrack_cartesian2spherical(stateVectorType, cart):
         list: Vector describing a point in spherical coordinates.
     """
 
-    if stateVectorType == (STATE_VECTORS_2DV or STATE_VECTORS_2DA):
+    if stateVectorType == STATE_VECTORS_2DV or stateVectorType == STATE_VECTORS_2DA:
         sph = np.zeros(3, dtype=float)
 
         posx = cart[0]
@@ -45,7 +45,7 @@ def gtrack_cartesian2spherical(stateVectorType, cart):
         sph[2] = (posx*velx+posy*vely)/sph[0]
         
 
-    elif stateVectorType == (STATE_VECTORS_3DV or STATE_VECTORS_3DA):
+    elif stateVectorType == STATE_VECTORS_3DV or stateVectorType == STATE_VECTORS_3DA:
         sph = np.zeros(4, dtype=float)
 
         posx = cart[0]
@@ -117,7 +117,7 @@ def gtrack_spherical2cartesian(stateVectorType, sph):
         
 
     elif stateVectorType == STATE_VECTORS_3DA:
-        cart = np.zeros(8, dtype=float)     # Last two elements are initialized to 0
+        cart = np.zeros(9, dtype=float)     # Last three elements are initialized to 0 (acceleration in x, y, z)
         rnge = sph[0]
         azim = sph[1]
         elev = sph [2]
@@ -180,7 +180,7 @@ def gtrack_unrollRadialVelocity(rvMax, rvExp, rvIn):
 
     else:
         # Going left
-        factor = int((distance - rvMax)/(2*rvMax))
+        factor = int((rvMax - distance)/(2*rvMax))
         rvOut = rvIn - 2*rvMax*factor
 
     return rvOut
