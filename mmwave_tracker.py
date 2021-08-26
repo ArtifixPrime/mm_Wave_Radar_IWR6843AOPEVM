@@ -2,13 +2,33 @@ import math
 import serial
 import time
 import numpy as np
+import matplotlib.pyplot as plt
+import logging
+import json
+
+logging.basicConfig(level=logging.INFO)
+log = logging.getLogger('tracker.log')
+log.debug('tracker.log initialized')
+
+import gtrack
+from gtrack import tracking_algorithm
 
 # Change the configuration file name
-configFileName = 'config_file.cfg'
+configFileName = 'config_file-midRange-5m_noGrouping.cfg'
 CLIport = {}
 Dataport = {}
 byteBuffer = np.zeros(2**15,dtype = 'uint8')
 byteBufferLength = 0;
+
+
+#
+MAX_TRACKS = gtrack.constants.GTRACK_NUM_TRACKS_MAX
+MAX_POINTS = gtrack.constants.GTRACK_NUM_POINTS_MAX
+STATE_VECTOR = gtrack.constants.STATE_VECTORS_3DA
+BENCHMARK_SIZE = gtrack.constants.GTRACK_BENCHMARK_SIZE
+
+
+
 
 
 # ------------------------------------------------------------------
@@ -76,7 +96,7 @@ def parseConfigFile(configFileName):
             chirpEndIdx = int(splitWords[2]);
             numLoops = int(splitWords[3]);
             numFrames = int(splitWords[4]);
-            framePeriodicity = int(splitWords[5]);
+            framePeriodicity = int(splitWords[5]);  # frame rate in Hz
 
             
     # Combine the read data to obtain the configuration parameters           
@@ -88,9 +108,139 @@ def parseConfigFile(configFileName):
     configParameters["dopplerResolutionMps"] = 3e8 / (2 * startFreq * 1e9 * (idleTime + rampEndTime) * 1e-6 * configParameters["numDopplerBins"] * numTxAnt)
     configParameters["maxRange"] = (300 * 0.9 * digOutSampleRate)/(2 * freqSlopeConst * 1e3)
     configParameters["maxVelocity"] = 3e8 / (4 * startFreq * 1e9 * (idleTime + rampEndTime) * 1e-6 * numTxAnt)
+    configParameters["frameRate"] = framePeriodicity
     
     return configParameters
    
+# ------------------------------------------------------------------
+
+# Function to set configuration for object tracking
+def trackingConfig(configParameters):
+
+    # GTRACK advanced config parameters
+    appSceneryParams = {
+        'sensorPosition': np.array([0.0, 0.0, 0.85], dtype=float),
+        'sensorOrientation': np.array([0.0, 0.0], dtype=float),
+        'numBoundaryBoxes': 1, # One boundary box
+        'boundaryBox':[
+            {
+                'x1': -1.5, # left boundary in meters
+                'x2':  1.5, # right boundary in meters
+                'y1':  0.1, # near boundary in meters
+                'y2':  5.0, # far boundary in meters
+                'z1':  0.0, # bottom boundary in meters
+                'z2':  3.0  # top boundary in meters
+            },
+            {
+                'x1':  0.0,
+                'x2':  0.0,
+                'y1':  0.0,
+                'y2':  0.0,
+                'z1':  0.0,
+                'z2':  0.0
+            }
+        ],
+        'numStaticBoxes': 1, # One static box
+        'staticBox': [
+            {
+                'x1': -1.0,
+                'x2':  1.0,
+                'y1':  0.2,
+                'y2':  0.8,
+                'z1':  0.0,
+                'z2':  3.0
+            },
+            {
+                'x1':  0.0,
+                'x2':  0.0,
+                'y1':  0.0,
+                'y2':  0.0,
+                'z1':  0.0,
+                'z2':  0.0
+            }
+        ]
+    }
+
+    boundaries = appSceneryParams['boundaryBox'][0]
+
+
+    appGatingParams = {
+        'gain': 2.0,
+        'limits': {
+            'depth':  1.5,
+            'width':  1.5,
+            'height': 2.0,
+            'vel':    1.0
+        }
+    }
+
+    appStateParams = {
+        'det2actThre':      3,
+        'det2freeThre':     10,
+        'active2freeThre':  20,
+        'static2freeThre':  100,
+        'exit2freeThre':    10,
+        'sleep2freeThre':   1000
+    }
+
+    appAllocationParams = {
+        'snrThre': 34.0,
+        'snrThreObscured': 200.0,
+        'velocityThre': 0.1,
+        'pointsThre': 9,
+        'maxDistanceThre': 5,
+        'maxVelThre': 10.0
+    }
+
+    appPresenceDetectionParams = {
+        'pointsThre': 5,                        # occupancy threshold, number of points. Setting pointsThre to 0 disables presence detection
+        'velocityThre': 0.0,                    # occupancy threshold, approaching velocity
+        'on2offThre': 0,                        # occupancy on to off threshold
+        'numOccupancyBoxes': 1,                 # Number of occupancy boxes. Presence detection algorithm will determine whether the combined shape is occupied. Setting numOccupancyBoxes to 0 disables presence detection.
+        'occupancyBox': [                       # Scene occupancy boxes.
+            {
+                'x1': -1.0,
+                'x2':  1.0,
+                'y1':  0.2,
+                'y2':  1.5,
+                'z1':  0.0,
+                'z2':  3.0
+            },
+            {
+                'x1':  0.0,
+                'x2':  0.0,
+                'y1':  0.0,
+                'y2':  0.0,
+                'z1':  0.0,
+                'z2':  0.0
+            }
+        ]
+    }
+
+
+    # GTRACK config
+    configGtrack = {
+        'stateVectorType': STATE_VECTOR,
+        'verbose': 3,                                                           # Level DEBUG - currently this setting DOES NOT DO ANYTHING
+        'deltaT': configParameters["frameRate"]*0.01,                           # Frame rate in ms
+        'maxRadialVelocity': configParameters["maxVelocity"],                   # Radial velocity from sensor is limited to +/- maxURV (in m/s)
+        'radialVelocityResolution': configParameters["dopplerResolutionMps"],   # Radial velocity resolution (in m/s)
+        'maxAcceleration': [0.0, 4.0, 0.0],                                     # Maximum expected target acceleration in lateral (X), longitudinal (Y), and vertical (Z) directions, m/s2.
+        'maxNumPoints': 250,
+        'maxNumTracks': 20,
+        'initialRadialVelocity': 1,                                             # Expected target radial velocity at the moment of detection, m/s
+        'advParams': {
+            'gatingParams': appGatingParams,
+            'stateParams': appStateParams,
+            'allocationParams': appAllocationParams,
+            'sceneryParams': appSceneryParams,
+            'presenceParams': appPresenceDetectionParams
+        }
+    }
+
+
+    return configGtrack, boundaries
+
 # ------------------------------------------------------------------
 
 # Funtion to read and parse the incoming data
@@ -185,8 +335,12 @@ def readAndParseData68xx(Dataport, configParameters):
         # Read the header
         # mmwave_sdk_03_05_00_04/packages/ti/demo/xwr64xx/mmw/docs/doxygen/html/struct_mmw_demo__output__message__header__t.html
         magicNumber = byteBuffer[idX:idX+8]
+        assert np.array_equal(magicNumber, magicWord)
+
         idX += 8
         version = format(np.matmul(byteBuffer[idX:idX+4],word),'x')
+        assert version == '3050004'
+
         idX += 4
         totalPacketLen = np.matmul(byteBuffer[idX:idX+4],word)
         idX += 4
@@ -199,6 +353,8 @@ def readAndParseData68xx(Dataport, configParameters):
         numDetectedObj = np.matmul(byteBuffer[idX:idX+4],word)
         idX += 4
         numTLVs = np.matmul(byteBuffer[idX:idX+4],word)
+        assert numTLVs <= 10
+
         idX += 4
         subFrameNumber = np.matmul(byteBuffer[idX:idX+4],word)
         idX += 4
@@ -247,29 +403,30 @@ def readAndParseData68xx(Dataport, configParameters):
 
                     # Calculate range, azimuth and elevation
                     # range of detected object
-                    objectRange[objectNum] = math.sqrt(
-                        x[objectNum] * x[objectNum] + 
-                        y[objectNum] * y[objectNum] + 
-                        z[objectNum] * z[objectNum]
-                    )
+                    objectRange[objectNum] = float(np.sqrt(
+                        float(x[objectNum]) * float(x[objectNum]) + 
+                        float(y[objectNum]) * float(y[objectNum]) + 
+                        float(z[objectNum]) * float(z[objectNum])
+                    ))
 
                     # azimuth of detected object
-                    if y[objectNum] == 0: # y can never be negative as that would mean detected object is behind the sensor
-                        if x[objectNum] >= 0:
-                            objectAzimuth[objectNum] = 90
+                    if y[objectNum] == np.float32(0.0): # y can never be negative as that would mean detected object is behind the sensor
+                        if x[objectNum] >= np.float32(0.0):
+                            objectAzimuth[objectNum] = float(90)
                         else:
-                            objectAzimuth[objectNum] = -90 
+                            objectAzimuth[objectNum] = float(-90)
                     else:
-                        objectAzimuth[objectNum] = math.atan(x[objectNum] / y[objectNum]) * 180 / PI
+                        objectAzimuth[objectNum] = float(math.atan(float(x[objectNum]) / float(y[objectNum])) * (180.0 / PI))
 
                     # elevation of detected object
-                    if x[objectNum] == 0 and y[objectNum] == 0:
-                        if z[objectNum] >= 0:
-                            objectElevation[objectNum] = 90
+                    rngeXY = math.sqrt((float(x[objectNum]) * float(x[objectNum]))+(float(y[objectNum]) * float(y[objectNum])))
+                    if (x[objectNum] == np.float32(0.0)) and (y[objectNum] == np.float32(0.0)) or (rngeXY == 0.0):
+                        if z[objectNum] >= np.float32(0.0):
+                            objectElevation[objectNum] = float(90)
                         else: 
-                            objectElevation[objectNum] = -90
+                            objectElevation[objectNum] = float(-90)
                     else:
-                        objectElevation[objectNum] = math.atan(z[objectNum] / math.sqrt((x[objectNum] * x[objectNum])+(y[objectNum] * y[objectNum]))) * 180 / PI
+                        objectElevation[objectNum] = float(math.atan(float(z[objectNum]) / rngeXY) * (180.0 / PI))
 
                     
                 
@@ -279,13 +436,7 @@ def readAndParseData68xx(Dataport, configParameters):
                     "x": x, "y": y, "z": z, 
                     "range": objectRange, "azimuth": objectAzimuth, "elevation": objectElevation, 
                     "velocity":velocity}
-                dataOK = 1
 
-            """# Check the header of the TLV message
-            tlv_type = np.matmul(byteBuffer[idX:idX+4],word)
-            idX += 4
-            tlv_length = np.matmul(byteBuffer[idX:idX+4],word)
-            idX += 4"""
 
             if tlv_type == MMWDEMO_UART_MSG_DETECTED_POINTS_SIDE_INFO:
 
@@ -312,6 +463,8 @@ def readAndParseData68xx(Dataport, configParameters):
                 detObj_sideInfo = {
                     "snr": snr, "noise": noise
                 }
+
+                dataOK = 1
 
             # If range profile is enabled in guiMonitor, TLV type 2 package will be added to the UART output packet
             if tlv_type == MMWDEMO_UART_MSG_RANGE_PROFILE:
@@ -365,8 +518,8 @@ def readAndParseData68xx(Dataport, configParameters):
                     idX += 2
 
 
-                
- 
+
+
         # Remove already processed data
         if idX > 0 and byteBufferLength>idX:
             shiftSize = totalPacketLen
@@ -381,30 +534,95 @@ def readAndParseData68xx(Dataport, configParameters):
                 byteBufferLength = 0         
 
     return dataOK, frameNumber, detObj, detObj_sideInfo, rangeProfile, noiseProfile
+
+# ------------------------------------------------------------------
+
+# Function to perform a single stracking step
+def updateTracking(frameNum, mNum, trackModule, pointCloud, targetDescriptor, presence, benchmarks):
+
+    gTick = frameNum
+
+    # Limit the points
+    if mNum > MAX_POINTS:
+        mNum = MAX_POINTS
+    
+    startTime = time.monotonic()
+    tNum, presence = tracking_algorithm.gtrack_step(trackModule, pointCloud, mNum, targetDescriptor, presence, bench=None)
+            
+    benchmarkTime = time.monotonic() - startTime
+    
+
+
 # ------------------------------------------------------------------
 
 # Funtion to update the data and display in the plot
-def update():
+def update(pointCloud, ax):
      
     dataOk = 0
     global detObj
     #global detObj_sideInfo
     x = []
     y = []
-      
+
     # Read and parse the received data
     dataOk, frameNumber, detObj, detObj_sideInfo, rangeProfile, noiseProfile = readAndParseData68xx(Dataport, configParameters)
+    mNum = 0
     
     if dataOk and len(detObj["x"])>0:
-        print(detObj)
-        print(detObj_sideInfo)
-        print(rangeProfile)
-        print(noiseProfile)
-        x = -detObj["x"]
-        y = detObj["y"]
+        mNum = detObj['numObj']
+        #print(detObj)
+        #print(detObj_sideInfo)
+        #print(rangeProfile)
+        #print(noiseProfile)
+        #x = -detObj["x"]
+        #y = detObj["y"]
+
+        x = -detObj['x']
+        #print('------------- X -------------')
+        #print(x)
+        y = -detObj['y']
+        #print('------------- Y -------------')
+        #print(y)
+        #ax.scatter(x, y)
+
         
-          
-    return dataOk
+        #plt.draw()
+        #plt.pause(0)
+        #time.sleep(0)
+
+        json_list = [] 
+        
+        for n in range(mNum):
+            # detPoint = [detObj['range'], detObj['azimuth'], detObj['elevation'], detObj['velocity'], detObj_sideInfo['snr']]
+            pointCloud.append(
+                np.array(
+                    [detObj['range'][n],
+                    math.radians(detObj['azimuth'][n]),
+                    math.radians(detObj['elevation'][n]),
+                    detObj['velocity'][n],
+                    detObj_sideInfo['snr'][n]],
+                    dtype=float
+                )
+            )
+
+            """json_list.append({
+                'range': float(detObj['range'][n]),
+                'azimuth': math.radians(detObj['azimuth'][n]),
+                'elevation': math.radians(detObj['elevation'][n]),
+                'velocity': float(detObj['velocity'][n]),
+                'snr': float(detObj_sideInfo['snr'][n])
+            })"""
+
+
+
+    """if dataOk:
+        with open('pointCloud.json', 'a') as fw:
+            fw.write(f'{json.dumps(json_list)},')"""
+
+
+    
+
+    return dataOk, frameNumber, mNum
 
 
 # -------------------------    MAIN   -----------------------------------------  
@@ -414,27 +632,69 @@ CLIport, Dataport = serialConfig(configFileName)
 
 # Get the configuration parameters from the configuration file
 configParameters = parseConfigFile(configFileName)
-   
+configGtrack, boundaries = trackingConfig(configParameters)
+
+#plt.ion()
+#fig = plt.figure()
+#ax = fig.add_axes([-2, -1.5, 2, 0])
+ax = None
+#x,y = ax.scatter([0],[0])
+#ax.set_xlim()
+#ax.xlim(-2, 2)
+#ax.ylim(-1.5, 0)
+#fig.canvas.draw()
+
+#plt.show()
+
+
+pointCloud = []
+targetDescriptor = []
+benchmarks = [0]*BENCHMARK_SIZE
+benchPerTrackTotal = 0
+benchPerTrackCount = 0
+benchPerTrackTotalAve = 0
+benchPerTrackTotalMax = 0
+benchPerTrackTotalMin  = 4294967295
+
+presence = 1
+
+
+trackingModules = {}
+tracking_algorithm.gtrack_create(configGtrack, 'person', trackingModules)
+
+startTimeGtrack = time.monotonic()
+
 # Main loop 
 detObj = {}  
 frameData = {}    
 currentIndex = 0
 while True:
     try:
+        tCheckNum = 0
+
         # Update the data and check if the data is okay
 
-        dataOk = update()
+        dataOk, frameNumber, mNum = update(pointCloud, ax)
+
+        tCheckNum
         
         if dataOk:
             # Store the current frame into frameData
             frameData[currentIndex] = detObj
             currentIndex += 1
+            #print(pointCloud)
+
+
+            updateTracking(frameNumber, mNum, trackingModules['person'], pointCloud, targetDescriptor, presence, benchmarks)
+            pointCloud.clear()
+
         
-        time.sleep(0.05) # Sampling frequency of 20 Hz
+        #time.sleep(0.1) # Sampling frequency of 20 Hz
         
     # Stop the program and close everything if Ctrl + c is pressed
     except KeyboardInterrupt:
         CLIport.write(('sensorStop\n').encode())
+        print('Sensor stopped.')
         CLIport.close()
         Dataport.close()
         #win.close()
