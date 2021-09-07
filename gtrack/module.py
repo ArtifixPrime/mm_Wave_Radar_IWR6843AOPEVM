@@ -102,7 +102,7 @@ def gtrack_moduleAllocate(moduleInstance, point, num):
 
             tElemFree = moduleInstance['freeList'][0]
 
-            if tElemFree == 0:
+            if len(moduleInstance['freeList']) == 0:
                 if log.isEnabledFor(logging.WARNING):
                     log_string = 'Maximum number of tracks reached!'
                     log.warning(log_string)
@@ -285,10 +285,11 @@ def gtrack_moduleUpdate(moduleInstance, point, num, var = None):
             log_string = f"{freedUnitInstance['heartBeatCount']}: uid[{freedUnitInstance['uid']}] FREED: S=[{freedUnitInstance['S_hat'][0]}, {freedUnitInstance['S_hat'][1]}, {freedUnitInstance['S_hat'][2]}, {freedUnitInstance['S_hat'][3]}]\n"
             log.debug(log_string)
 
-            moduleInstance['hTrack'][uid] = None
+            #moduleInstance['hTrack'][uid] = deepcopy(unitInstanceSch)
 
             moduleInstance['targetNumCurrent'] -=1
-            moduleInstance['freeList'].append(tElemToRemove)
+            #moduleInstance['freeList'].append(tElemToRemove)
+            moduleInstance['freeList'].insert(0, tElemToRemove)
 
 
 def gtrack_modulePresence(moduleInstance, presence):
