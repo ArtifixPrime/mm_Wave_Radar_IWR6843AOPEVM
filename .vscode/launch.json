@@ -10,6 +10,13 @@
             "request": "launch",
             "program": "${file}",
             "console": "integratedTerminal"
+        },
+        {
+            "name": "Python: run tracker",
+            "type": "python",
+            "request": "launch",
+            "program": "mmwave_tracker.py",
+            "console": "integratedTerminal"
         }
     ]
 }
