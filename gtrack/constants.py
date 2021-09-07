@@ -194,18 +194,18 @@ unitInstanceSch = {
     'outside2freeCount': 0,                 # Outside boundary box count to free
     'maxAcceleration': [0.0, 0.0, 0.0],     # Configured target maximum acceleration
     'dt': 0.0,                              # Configured Frame rate
-    'F': None,                              # Pointer to current Transition matrix
-    'Q': None,                              # Pointer to current Process Noise matrix
+#    'F': None,                              # Pointer to current Transition matrix
+#    'Q': None,                              # Pointer to current Process Noise matrix
     'S_hat': None,                          # State matrix, estimated
     'S_apriori_hat': None,                  # State matrix, predicted
     'P_hat': None,                          # Process matrix, estimated
     'P_apriori_hat': None,                  # Process matrix, predicted
     'H_s': None,                            # Expected Measurement matrix
-    'uCenter': [],                          # Calculated measurement centroid
+    'uCenter': [0.0, 0.0, 0.0, 0.0],        # Calculated measurement centroid
     'uPos': [0.0, 0.0, 0.0],                # Calculated measurement centroid [posX, posY, posZ] in meters
     'H_limits': [],                         # Limits for associated measurments
     'estSpread': [],                        # Estimated spread of the measurements
-    'estDim': 0.0,                          # Estimated physical dimensions of the target
+    'estDim': [0.0, 0.0, 0.0, 0.0],         # Estimated physical dimensions of the target
     'gD': None,                             # Group Dispersion matrix
     'gC': None,                             # Group Member Covariance matrix (between a member in measurment group and group centroid)
     'gC_inv': None,                         # Inverse of Group Covariance matrix
