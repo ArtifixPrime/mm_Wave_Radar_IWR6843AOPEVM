@@ -103,6 +103,7 @@ def parseConfigFile(configFileName):
     numChirpsPerFrame = (chirpEndIdx - chirpStartIdx + 1) * numLoops
     configParameters["numDopplerBins"] = numChirpsPerFrame / numTxAnt
     configParameters["numRangeBins"] = numAdcSamplesRoundTo2
+    configParameters["samplesPerChirp"] = numAdcSamples
     configParameters["rangeResolutionMeters"] = (3e8 * digOutSampleRate * 1e3) / (2 * freqSlopeConst * 1e12 * numAdcSamples)
     configParameters["rangeIdxToMeters"] = (3e8 * digOutSampleRate * 1e3) / (2 * freqSlopeConst * 1e12 * configParameters["numRangeBins"])
     configParameters["dopplerResolutionMps"] = 3e8 / (2 * startFreq * 1e9 * (idleTime + rampEndTime) * 1e-6 * configParameters["numDopplerBins"] * numTxAnt)
@@ -145,10 +146,10 @@ def trackingConfig(configParameters):
             {
                 'x1': -1.0,
                 'x2':  1.0,
-                'y1':  0.2,
-                'y2':  0.8,
+                'y1':  0.1,
+                'y2':  1.0,
                 'z1':  0.0,
-                'z2':  3.0
+                'z2':  2.0
             },
             {
                 'x1':  0.0,
@@ -161,11 +162,14 @@ def trackingConfig(configParameters):
         ]
     }
 
-    boundaries = appSceneryParams['boundaryBox'][0]
+    boundaries = {}
+
+    boundaries['boundaryBox'] = appSceneryParams['boundaryBox'][0]
+    boundaries['staticBox'] = appSceneryParams['staticBox'][0]
 
 
     appGatingParams = {
-        'gain': 2.0,
+        'gain': 3.0,
         'limits': {
             'depth':  1.5,
             'width':  1.5,
@@ -175,21 +179,21 @@ def trackingConfig(configParameters):
     }
 
     appStateParams = {
-        'det2actThre':      3,
-        'det2freeThre':     10,
-        'active2freeThre':  20,
+        'det2actThre':      10,
+        'det2freeThre':     50,
+        'active2freeThre':  50,
         'static2freeThre':  100,
-        'exit2freeThre':    10,
+        'exit2freeThre':    50,
         'sleep2freeThre':   1000
     }
 
     appAllocationParams = {
-        'snrThre': 34.0,
+        'snrThre': 36.0,
         'snrThreObscured': 200.0,
         'velocityThre': 0.1,
         'pointsThre': 9,
-        'maxDistanceThre': 5,
-        'maxVelThre': 10.0
+        'maxDistanceThre': 1.1,
+        'maxVelThre': 3.0
     }
 
     appPresenceDetectionParams = {
@@ -222,7 +226,7 @@ def trackingConfig(configParameters):
     configGtrack = {
         'stateVectorType': STATE_VECTOR,
         'verbose': 3,                                                           # Level DEBUG - currently this setting DOES NOT DO ANYTHING
-        'deltaT': configParameters["frameRate"]*0.01,                           # Frame rate in ms
+        'deltaT': configParameters["frameRate"]*0.001,                          # Frame rate in ms
         'maxRadialVelocity': configParameters["maxVelocity"],                   # Radial velocity from sensor is limited to +/- maxURV (in m/s)
         'radialVelocityResolution': configParameters["dopplerResolutionMps"],   # Radial velocity resolution (in m/s)
         'maxAcceleration': [0.0, 4.0, 0.0],                                     # Maximum expected target acceleration in lateral (X), longitudinal (Y), and vertical (Z) directions, m/s2.
@@ -250,7 +254,7 @@ def readAndParseData68xx(Dataport, configParameters):
     # Constants
     OBJ_STRUCT_SIZE_BYTES = 12;
     BYTE_VEC_ACC_MAX_SIZE = 2**15;
-    FFT_SIZE = 64;
+    FFT_SIZE = configParameters["samplesPerChirp"];
 
     MMWDEMO_UART_MSG_DETECTED_POINTS = 1;
     MMWDEMO_UART_MSG_RANGE_PROFILE   = 2;
@@ -468,6 +472,7 @@ def readAndParseData68xx(Dataport, configParameters):
 
             # If range profile is enabled in guiMonitor, TLV type 2 package will be added to the UART output packet
             if tlv_type == MMWDEMO_UART_MSG_RANGE_PROFILE:
+                continue
 
                 # Initialize the array for raw data
                 power = np.zeros(FFT_SIZE,dtype=np.uint16)
@@ -494,6 +499,7 @@ def readAndParseData68xx(Dataport, configParameters):
 
             # If noise profile is enabled in guiMonitor, TLV type 3 package will be added to the UART output packet 
             if tlv_type == MMWDEMO_UART_MSG_NOISE_PROFILE:
+                continue
 
                 # Initialize the array for raw data
                 noise = np.zeros(FFT_SIZE,dtype=np.uint16)
@@ -563,10 +569,14 @@ def update(pointCloud, ax):
     #global detObj_sideInfo
     x = []
     y = []
+    #cloud, = ax.scatter(x, y)
 
     # Read and parse the received data
     dataOk, frameNumber, detObj, detObj_sideInfo, rangeProfile, noiseProfile = readAndParseData68xx(Dataport, configParameters)
     mNum = 0
+    goodPoints = 0
+    totalSnr = 0.0
+    cloud_v = []
     
     if dataOk and len(detObj["x"])>0:
         mNum = detObj['numObj']
@@ -577,20 +587,29 @@ def update(pointCloud, ax):
         #x = -detObj["x"]
         #y = detObj["y"]
 
-        x = -detObj['x']
+        x = detObj['x']
         #print('------------- X -------------')
         #print(x)
-        y = -detObj['y']
+        y = detObj['y']
+        
         #print('------------- Y -------------')
         #print(y)
-        #ax.scatter(x, y)
-
+        #ax.xlim(x_boundaries)
+        #ax.ylim(y_boundaries)
         
-        #plt.draw()
-        #plt.pause(0)
-        #time.sleep(0)
+        #cloud.set_xdata(x)
+        #cloud.set_ydata(y)
+        #figure.canvas.draw()
+        #figure.canvas.flush_events()
 
-        json_list = [] 
+
+        cloud = ax.scatter(x, y)
+        #figure.canvas.draw()
+        #figure.canvas.flush_events()
+        #cloud.set_xdata(x)
+        plt.pause(0.01)
+        #time.sleep(0.01)
+        cloud.remove()
         
         for n in range(mNum):
             # detPoint = [detObj['range'], detObj['azimuth'], detObj['elevation'], detObj['velocity'], detObj_sideInfo['snr']]
@@ -605,7 +624,23 @@ def update(pointCloud, ax):
                 )
             )
 
-            """json_list.append({
+            #if (detObj['x'][n] >= -0.75) and (detObj['x'][n] <= 0.75):
+            #    if (detObj['y'][n] >= 1.00) and (detObj['y'][n] <= 2.5):
+            #        goodPoints += 1
+            #        totalSnr += detObj_sideInfo['snr'][n]
+            #        cloud_v.append(detObj['velocity'][n])
+
+    #if len(cloud_v) > 0:
+    #    max_v = max(cloud_v)
+    #    min_v = min(cloud_v)
+    #    delta_v = math.fabs(max_v - min_v)
+
+    #else:
+    #    delta_v = 0.0
+
+            
+
+        """json_list.append({
                 'range': float(detObj['range'][n]),
                 'azimuth': math.radians(detObj['azimuth'][n]),
                 'elevation': math.radians(detObj['elevation'][n]),
@@ -615,8 +650,10 @@ def update(pointCloud, ax):
 
 
 
-    """if dataOk:
-        with open('pointCloud.json', 'a') as fw:
+    #if totalSnr > 0.0:
+    #    with open('static-1.csv', 'a') as fw:
+    #        fw.write(f"{goodPoints}, {totalSnr:.2f},{delta_v:.2f}\n")
+        """with open('pointCloud.json', 'a') as fw:
             fw.write(f'{json.dumps(json_list)},')"""
 
 
@@ -634,15 +671,26 @@ CLIport, Dataport = serialConfig(configFileName)
 configParameters = parseConfigFile(configFileName)
 configGtrack, boundaries = trackingConfig(configParameters)
 
-#plt.ion()
-#fig = plt.figure()
-#ax = fig.add_axes([-2, -1.5, 2, 0])
-ax = None
-#x,y = ax.scatter([0],[0])
-#ax.set_xlim()
-#ax.xlim(-2, 2)
-#ax.ylim(-1.5, 0)
-#fig.canvas.draw()
+x_boundaries = (boundaries['boundaryBox']['x1'], boundaries['boundaryBox']['x2'])
+x_static = (boundaries['staticBox']['x1'], boundaries['staticBox']['x2'])
+
+y_boundaries = (boundaries['boundaryBox']['y1'], boundaries['boundaryBox']['y2'])
+y_static = (boundaries['staticBox']['y1'], boundaries['staticBox']['y2'])
+
+z_boundaries = (boundaries['boundaryBox']['z1'], boundaries['boundaryBox']['z2'])
+z_static = (boundaries['staticBox']['z1'], boundaries['staticBox']['z2'])
+
+
+plt.style.use('ggplot')
+plt.ion()
+
+#figure = plt.figure()
+#ax = figure.add_subplot(projection='3d')
+figure, ax = plt.subplots(figsize=(8,6))
+
+
+ax.set_xlim(x_boundaries)
+ax.set_ylim(y_boundaries)
 
 #plt.show()
 
@@ -675,6 +723,7 @@ while True:
         # Update the data and check if the data is okay
 
         dataOk, frameNumber, mNum = update(pointCloud, ax)
+        plt.show()
 
         tCheckNum
         
@@ -685,7 +734,7 @@ while True:
             #print(pointCloud)
 
 
-            updateTracking(frameNumber, mNum, trackingModules['person'], pointCloud, targetDescriptor, presence, benchmarks)
+            #updateTracking(frameNumber, mNum, trackingModules['person'], pointCloud, targetDescriptor, presence, benchmarks)
             pointCloud.clear()
 
         
