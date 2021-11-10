@@ -139,7 +139,14 @@ def gtrack_moduleAllocate(moduleInstance, point, num):
 
                     if (math.fabs(mCurrent[3] - mCenter[3]) < moduleInstance['params']['allocationParams']['maxVelThre']):
 
-                        dist = gtrack_calcDistance(mCenter, mCurrent)
+                        try:
+                            dist = gtrack_calcDistance(mCenter, mCurrent)
+                            if dist < 0: dist = 0
+                            math.sqrt(dist)
+                            # assert dist >= 0
+
+                        except ValueError:
+                            log.info(dist)
                         
                         if (math.sqrt(dist) < moduleInstance['params']['allocationParams']['maxDistanceThre']):
 
