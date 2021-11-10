@@ -1052,5 +1052,6 @@ def gtrack_unitReport(unitInstance, t, tNum):
     description += f"Target confidence level: {targetDesc['confidenceLevel']:.2f}.\n"
 
     log.info(description)
+    #log.info(f"Tracking a target with tid[{targetDesc['tid']}].\n")
 
     t.insert(tNum, targetDesc)
